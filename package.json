@@ -1,0 +1,74 @@
+{
+  "name": "floodgate",
+  "version": "1.0.0",
+  "description": "Web-based load testing tool",
+  "main": "main.js",
+  "scripts": {
+    "start": "node server.js",
+    "electron": "electron .",
+    "dist:win": "electron-builder --win",
+    "dist:dir": "electron-builder --win --dir",
+    "dist:mac": "electron-builder --mac",
+    "dist": "electron-builder --win --mac",
+    "icons": "node scripts/generate-icons.js"
+  },
+  "build": {
+    "appId": "com.floodgate.app",
+    "productName": "Floodgate",
+    "asar": true,
+    "directories": {
+      "output": "C:/FloodgateBuilds"
+    },
+    "asarUnpack": [
+      "data/**",
+      "node_modules/@gatling.io/**"
+    ],
+    "files": [
+      "main.js",
+      "server.js",
+      "public/**",
+      "data/**",
+      "package.json",
+      "node_modules/**",
+      "!node_modules/.cache/**",
+      "!temp/**"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "zip",  "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "dmg": {
+      "title": "Floodgate"
+    }
+  },
+  "dependencies": {
+    "@gatling.io/cli": "^3.15.2",
+    "@gatling.io/core": "^3.15.2",
+    "@gatling.io/http": "^3.15.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^24.13.3",
+    "png2icons": "^2.0.1",
+    "sharp": "^0.33.5"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(npm search:*)",
+      "Bash(node -e \"const d=require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\); const p=JSON.parse\\(d\\); console.log\\('bin:', JSON.stringify\\(p.bin\\)\\); console.log\\('main:', p.main\\); console.log\\('exports:', JSON.stringify\\(p.exports, null,2\\).slice\\(0,300\\)\\);\")",
+      "Bash(node f:/work/Floodgate/node_modules/@gatling.io/cli/target/index.js --help)",
+      "Bash(node f:/work/Floodgate/node_modules/@gatling.io/cli/target/index.js run --help)",
+      "Bash(node --check f:/work/Floodgate/server.js)",
+      "Bash(node --check f:/work/Floodgate/main.js)",
+      "Bash(node --check f:/work/Floodgate/public/stress/app.js)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const buf=fs.readFileSync\\('f:/work/Floodgate/build/icon.ico'\\); console.log\\('ICO size:', buf.length, 'bytes'\\); console.log\\('Magic bytes:', buf[0], buf[1], buf[2], buf[3]\\);\")"
+    ]
+  }
+}

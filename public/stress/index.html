@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floodgate — Stress Test</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌊</text></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    ::-webkit-scrollbar { display: none; }
+
+    body {
+      background: #080c10;
+      color: #e2e8f0;
+      font-family: 'JetBrains Mono', monospace;
+      margin: 0;
+      padding: 0 0 48px;
+      min-height: 100vh;
+    }
+
+    /* ── Top Nav ── */
+    .topnav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px 0 24px;
+      padding-right: 145px;
+      height: 52px;
+      background: #0d1117;
+      border-bottom: 1px solid #1e2a3a;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      -webkit-app-region: drag;
+    }
+    .topnav-logo {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #7c3aed;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      text-decoration: none;
+      -webkit-app-region: no-drag;
+    }
+    .topnav-links {
+      display: flex;
+      gap: 2px;
+      -webkit-app-region: no-drag;
+    }
+    .topnav-link {
+      padding: 6px 12px;
+      border-radius: 5px;
+      font-size: 0.68rem;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      text-decoration: none;
+      color: #475569;
+      transition: color 0.15s, background 0.15s;
+    }
+    .topnav-link:hover { color: #e2e8f0; background: #1e2a3a; }
+    .topnav-link.active { color: #a78bfa; background: #1a1040; }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+    header {
+      text-align: center;
+      margin-bottom: 24px;
+      padding-bottom: 24px;
+    }
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #7c3aed;
+      margin: 0 0 6px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+    header p {
+      color: #475569;
+      margin: 0;
+      font-size: 0.72rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .panel {
+      background: #0d1117;
+      border: 1px solid #1e2a3a;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+
+    .panel-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 2.5px;
+      color: #7c3aed;
+      margin: 0 0 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #1e2a3a;
+    }
+
+    .field { margin-bottom: 0; }
+    .field label {
+      display: block;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #64748b;
+      margin-bottom: 7px;
+    }
+
+    .url-row { display: flex; gap: 8px; }
+    .url-row select { width: 110px; flex: none; }
+    .url-row input  { flex: 1; }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 9px 12px;
+      background: #080c10;
+      border: 1px solid #1e2a3a;
+      border-radius: 4px;
+      color: #e2e8f0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.83rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus, textarea:focus { border-color: #7c3aed; }
+    select { cursor: pointer; }
+    textarea { resize: vertical; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .config-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .spacer { margin-bottom: 16px; }
+
+    #headersContainer { display: flex; flex-direction: column; gap: 7px; }
+    .header-row { display: flex; gap: 8px; }
+    .header-row input { flex: 1; }
+
+    .btn-sm {
+      background: #111827;
+      border: 1px solid #1e2a3a;
+      color: #94a3b8;
+      padding: 9px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-sm:hover { border-color: #7c3aed; color: #a78bfa; }
+
+    /* ── Test item buttons (Run This Test / Stop) ── */
+    .run-btn {
+      flex: 1;
+      padding: 10px 14px;
+      background: #1a0f3a;
+      border: 1px solid #4c1d95;
+      border-radius: 5px;
+      color: #c4b5fd;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .run-btn:hover:not(:disabled) { background: #2e1065; border-color: #7c3aed; color: #ede9fe; }
+    .run-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-stop-one {
+      padding: 10px 18px;
+      background: transparent;
+      border: 1px solid #451a03;
+      border-radius: 5px;
+      color: #92400e;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .btn-stop-one:hover { background: #1c0a00; border-color: #92400e; color: #fcd34d; }
+
+    /* ── Action bar (Add Test / Run All / Stop All) ── */
+    .action-bar {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid #1e2a3a;
+    }
+    .btn-add {
+      padding: 9px 18px;
+      background: transparent;
+      border: 1px solid #1e3a2a;
+      border-radius: 5px;
+      color: #4ade80;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-add:hover { background: #0d2015; border-color: #166534; color: #86efac; }
+
+    .btn-run-all {
+      flex: 1;
+      padding: 10px 14px;
+      background: #0d2015;
+      border: 1px solid #166534;
+      border-radius: 5px;
+      color: #4ade80;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-run-all:hover:not(:disabled) { background: #14532d; border-color: #22c55e; color: #86efac; }
+    .btn-run-all:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-stop-all {
+      padding: 10px 18px;
+      background: transparent;
+      border: 1px solid #451a03;
+      border-radius: 5px;
+      color: #92400e;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .btn-stop-all:hover { background: #1c0a00; border-color: #92400e; color: #fcd34d; }
+
+    .test-list { display: flex; flex-direction: column; gap: 16px; }
+    .test-item {
+      position: relative;
+      border: 1px solid #1e2a3a;
+      border-radius: 6px;
+      padding: 16px;
+      background: #080c10;
+    }
+    .test-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .test-item-title { font-weight: 700; color: #a78bfa; font-size: 0.9rem; }
+    .test-item-actions { display: flex; gap: 8px; }
+    .remove-test-btn {
+      background: #450a0a;
+      border: 1px solid #7f1d1d;
+      border-radius: 4px;
+      padding: 5px 12px;
+      color: #fca5a5;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .remove-test-btn:hover { background: #7f1d1d; border-color: #ef4444; color: #fecaca; }
+
+    #progressPanel { display: none; }
+    .prog-header { display: flex; justify-content: space-between; margin-bottom: 10px; }
+    .prog-status  { font-size: 0.72rem; color: #64748b; letter-spacing: 1px; }
+    .prog-pct     { font-size: 0.72rem; color: #a78bfa; font-weight: 700; }
+    .prog-track   { height: 5px; background: #1e2a3a; border-radius: 3px; overflow: hidden; }
+    .prog-fill    {
+      height: 100%;
+      background: linear-gradient(90deg, #7c3aed, #a78bfa);
+      width: 0%;
+      border-radius: 3px;
+      transition: width 0.35s ease;
+    }
+
+    #resultsPanel { display: none; }
+
+    .cards-6 {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 860px) { .cards-6 { grid-template-columns: repeat(3, 1fr); } }
+
+    .metric-card {
+      background: #080c10;
+      border: 1px solid #1e2a3a;
+      border-radius: 6px;
+      padding: 14px 10px;
+      text-align: center;
+    }
+    .metric-card .lbl {
+      font-size: 0.58rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+    .metric-card .val       { font-size: 1.2rem; font-weight: 700; color: #e2e8f0; }
+    .metric-card .val.purple { color: #a78bfa; }
+    .metric-card .val.green  { color: #22c55e; }
+    .metric-card .val.yellow { color: #f59e0b; }
+    .metric-card .val.red    { color: #ef4444; }
+
+    .cards-6-lat {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 860px) { .cards-6-lat { grid-template-columns: repeat(3, 1fr); } }
+
+    .lat-card {
+      background: #080c10;
+      border: 1px solid #1e2a3a;
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+    }
+    .lat-card .lbl { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 1px; color: #475569; margin-bottom: 5px; }
+    .lat-card .val { font-size: 0.9rem; font-weight: 700; color: #7c3aed; }
+
+    .charts-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 14px;
+    }
+    @media (max-width: 700px) { .charts-row { grid-template-columns: 1fr; } }
+
+    .chart-box {
+      background: #080c10;
+      border: 1px solid #1e2a3a;
+      border-radius: 6px;
+      padding: 16px;
+    }
+    .chart-box h4 {
+      font-size: 0.62rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #475569;
+      margin: 0 0 14px;
+    }
+
+    .log-wrap { overflow: hidden; }
+    .log-scroll { max-height: 240px; overflow-y: auto; }
+    .log-scroll::-webkit-scrollbar { width: 6px; }
+    .log-scroll::-webkit-scrollbar-track { background: #080c10; }
+    .log-scroll::-webkit-scrollbar-thumb { background: #1e2a3a; border-radius: 3px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+    th {
+      text-align: left;
+      padding: 7px 12px;
+      font-size: 0.6rem;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #475569;
+      background: #080c10;
+      border-bottom: 1px solid #1e2a3a;
+      position: sticky;
+      top: 0;
+    }
+    td { padding: 5px 12px; border-bottom: 1px solid #0d1117; color: #94a3b8; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #0d1117; }
+
+    .ok   { color: #22c55e; }
+    .fail { color: #ef4444; }
+    .warn { color: #f59e0b; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .status-badge.running { background: #1e2a3a; color: #a78bfa; }
+    .status-badge.done    { background: #166534; color: #4ade80; }
+    .status-badge.failed  { background: #450a0a; color: #f87171; }
+
+    .info-panel {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+      font-size: 0.7rem;
+      color: #475569;
+    }
+    @media (max-width: 600px) { .info-panel { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+  <nav class="topnav">
+    <a href="/" class="topnav-logo">Floodgate</a>
+    <div class="topnav-links">
+      <a href="/stress/" class="topnav-link active">⚡ Stress Test</a>
+      <a href="/scenario/" class="topnav-link">🎯 Scenarios</a>
+    </div>
+  </nav>
+
+  <div class="container">
+
+    <header>
+      <h1>Stress Test</h1>
+      <p>Maximum load testing — find your server's limits</p>
+      <p id="k6Status" style="margin-top:8px;color:#94a3b8; font-size:0.72rem;">Checking k6 version...</p>
+      <p style="margin-top:6px;font-size:0.68rem;color:#475569;">
+        Concurrent Tests: <span id="slotCount">5</span>/5 &nbsp;|&nbsp;
+        Total VUS: <span id="vusCount">0</span>/500 &nbsp;|&nbsp;
+        Active: <span id="activeCount">0</span>
+      </p>
+    </header>
+
+    <!-- Test List -->
+    <div class="panel">
+      <div class="panel-title">Test List <span style="color:#334155;font-size:0.6rem">(add multiple tests, then run all)</span></div>
+      <div id="testList" class="test-list"></div>
+      <div class="action-bar">
+        <button type="button" id="addTestBtn" class="btn-add">+ Add Test</button>
+        <button type="button" id="runAllBtn" class="btn-run-all">▶ Run All</button>
+        <button type="button" id="stopAllBtn" class="btn-stop-all">⏹ Stop All</button>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="panel" id="progressPanel">
+      <div class="prog-header">
+        <span class="prog-status" id="progStatus">Running tests...</span>
+        <span class="prog-pct" id="progPct">0%</span>
+      </div>
+      <div class="prog-track">
+        <div class="prog-fill" id="progFill"></div>
+      </div>
+      <div class="info-panel">
+        <div>Max concurrent: <span id="maxConcurrent">5</span></div>
+        <div>Available slots: <span id="availSlots">0</span></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="resultsPanel">
+      <div class="panel">
+        <div class="panel-title">
+          Test Results
+          <span style="float:right">
+            <button type="button" id="clearResultsBtn" class="btn-sm">Clear Results</button>
+          </span>
+        </div>
+        <div class="cards-6" id="summaryCards"></div>
+        <div class="panel-title" style="margin-top:20px">Latency Percentiles</div>
+        <div class="cards-6-lat" id="latCards"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Charts</div>
+        <div class="charts-row">
+          <div class="chart-box">
+            <h4>Latency Distribution</h4>
+            <canvas id="latencyChart"></canvas>
+          </div>
+          <div class="chart-box">
+            <h4>Status Code Breakdown</h4>
+            <canvas id="statusChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Request Log <span style="color:#334155;font-size:0.6rem">(last 100)</span></div>
+        <div class="log-wrap">
+          <div class="log-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th><th>Status</th><th>Latency</th><th>Result</th><th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="logBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" id="k6RawPanel">
+        <div class="panel-title">Raw k6 Output</div>
+        <pre id="rawLog" style="background:#020617; color:#d4d4dc; border:1px solid #1e2a3a; border-radius:6px; padding:12px; min-height:150px; max-height:240px; overflow:auto;">Waiting for test runs...</pre>
+      </div>
+    </div><!-- /resultsPanel -->
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

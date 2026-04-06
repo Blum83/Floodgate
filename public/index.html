@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floodgate</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌊</text></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    ::-webkit-scrollbar { display: none; }
+    html { overflow: hidden; }
+
+    body {
+      background: #080c10;
+      color: #e2e8f0;
+      font-family: 'JetBrains Mono', monospace;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Titlebar drag region ── */
+    .topbar {
+      height: 52px;
+      background: #0d1117;
+      border-bottom: 1px solid #1e2a3a;
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      padding-right: 145px;
+      -webkit-app-region: drag;
+      flex-shrink: 0;
+      gap: 10px;
+    }
+    .topbar-logo {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #7c3aed;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      -webkit-user-select: none;
+    }
+    .topbar-sep {
+      width: 1px;
+      height: 14px;
+      background: #1e2a3a;
+    }
+    .topbar-sub {
+      font-size: 0.58rem;
+      color: #2d3d52;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      -webkit-user-select: none;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px 56px;
+    }
+
+    .logo {
+      text-align: center;
+      margin-bottom: 56px;
+    }
+    .logo h1 {
+      font-size: 3rem;
+      font-weight: 700;
+      color: #7c3aed;
+      margin: 0 0 10px;
+      letter-spacing: 8px;
+      text-transform: uppercase;
+    }
+    .logo p {
+      color: #334155;
+      margin: 0;
+      font-size: 0.68rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+    }
+
+    .modes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      width: 100%;
+      max-width: 780px;
+    }
+    @media (max-width: 600px) { .modes { grid-template-columns: 1fr; } }
+
+    .mode-card {
+      display: flex;
+      flex-direction: column;
+      background: #0d1117;
+      border: 1px solid #1e2a3a;
+      border-radius: 10px;
+      padding: 28px 26px 22px;
+      text-decoration: none;
+      color: inherit;
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.15s, box-shadow 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .mode-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity 0.2s;
+      border-radius: 10px;
+    }
+    .mode-card.stress::before  { background: radial-gradient(ellipse at top left, rgba(124,58,237,0.07), transparent 65%); }
+    .mode-card.scenario::before { background: radial-gradient(ellipse at top left, rgba(34,197,94,0.07), transparent 65%); }
+
+    .mode-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+    }
+    .mode-card.stress:hover   { border-color: #4c1d95; }
+    .mode-card.scenario:hover { border-color: #166534; }
+    .mode-card:hover::before  { opacity: 1; }
+
+    .mode-icon {
+      font-size: 2rem;
+      margin-bottom: 16px;
+      line-height: 1;
+    }
+    .mode-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .mode-card.stress   .mode-title { color: #a78bfa; }
+    .mode-card.scenario .mode-title { color: #4ade80; }
+
+    .mode-desc {
+      font-size: 0.75rem;
+      color: #475569;
+      line-height: 1.7;
+      margin-bottom: 18px;
+      flex: 1;
+    }
+
+    .mode-features {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-bottom: 22px;
+    }
+    .mode-feature {
+      font-size: 0.65rem;
+      color: #334155;
+      letter-spacing: 0.5px;
+    }
+    .mode-feature::before { content: '— '; }
+
+    /* ── Card footer: cta + badge ── */
+    .mode-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: auto;
+    }
+
+    .mode-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 18px;
+      border-radius: 5px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .mode-cta:hover { opacity: 0.85; transform: translateY(-1px); }
+    .mode-card.stress   .mode-cta { background: #5b21b6; color: #ddd6fe; }
+    .mode-card.scenario .mode-cta { background: #14532d; color: #86efac; }
+
+    .powered-badge {
+      font-size: 0.58rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 4px 9px;
+      border-radius: 4px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .powered-badge.k6      { background: #1a1535; color: #6d28d9; border: 1px solid #2d1f5e; }
+    .powered-badge.gatling { background: #0f2918; color: #16a34a; border: 1px solid #14532d; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <span class="topbar-logo">Floodgate</span>
+    <div class="topbar-sep"></div>
+    <span class="topbar-sub">Load Testing Platform</span>
+  </div>
+
+  <div class="hero">
+    <div class="logo">
+      <h1>Floodgate</h1>
+      <p>Load Testing Platform</p>
+    </div>
+
+    <div class="modes">
+      <a href="/stress/" class="mode-card stress">
+        <div class="mode-icon">⚡</div>
+        <div class="mode-title">Stress Test</div>
+        <div class="mode-desc">
+          Maximum load on an endpoint. Find your server's breaking point.
+        </div>
+        <div class="mode-features">
+          <div class="mode-feature">One or multiple endpoints</div>
+          <div class="mode-feature">Up to 5000 concurrent VUs</div>
+          <div class="mode-feature">Ramp-up, duration, cooldown</div>
+          <div class="mode-feature">Metrics: RPS, latency, error rate</div>
+        </div>
+        <div class="mode-footer">
+          <div class="mode-cta">Open →</div>
+          <span class="powered-badge k6">Powered by k6</span>
+        </div>
+      </a>
+
+      <a href="/scenario/" class="mode-card scenario">
+        <div class="mode-icon">🎯</div>
+        <div class="mode-title">Scenarios</div>
+        <div class="mode-desc">
+          Real user simulation. Chained requests with data dependencies.
+        </div>
+        <div class="mode-features">
+          <div class="mode-feature">Multi-step user flows</div>
+          <div class="mode-feature">Extraction: tokens, IDs from responses</div>
+          <div class="mode-feature">Environments (dev / staging / prod)</div>
+          <div class="mode-feature">Run history and trends</div>
+        </div>
+        <div class="mode-footer">
+          <div class="mode-cta">Open →</div>
+          <span class="powered-badge gatling">Powered by Gatling</span>
+        </div>
+      </a>
+    </div>
+  </div>
+
+</body>
+</html>

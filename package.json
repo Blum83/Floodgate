@@ -17,7 +17,7 @@
     "productName": "Floodgate",
     "asar": true,
     "directories": {
-      "output": "C:/FloodgateBuilds"
+      "output": "dist"
     },
     "asarUnpack": [
       "data/**",

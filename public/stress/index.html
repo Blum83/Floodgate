@@ -418,6 +418,99 @@
       color: #475569;
     }
     @media (max-width: 600px) { .info-panel { grid-template-columns: 1fr; } }
+    /* ── k6 Install Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #0d1117;
+      border: 1px solid #2d1f5e;
+      border-radius: 10px;
+      padding: 32px 28px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    }
+    .modal-icon { font-size: 2rem; margin-bottom: 16px; }
+    .modal-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .modal-desc {
+      font-size: 0.72rem;
+      color: #475569;
+      line-height: 1.7;
+      margin-bottom: 24px;
+    }
+    .modal-progress {
+      display: none;
+      margin-bottom: 20px;
+    }
+    .modal-progress.visible { display: block; }
+    .modal-progress-bar {
+      height: 4px;
+      background: #1e2a3a;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    .modal-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #5b21b6, #a78bfa);
+      width: 0%;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .modal-progress-msg {
+      font-size: 0.65rem;
+      color: #64748b;
+      letter-spacing: 0.5px;
+    }
+    .modal-actions { display: flex; gap: 8px; }
+    .btn-install {
+      flex: 1;
+      padding: 11px 16px;
+      background: #5b21b6;
+      border: 1px solid #7c3aed;
+      border-radius: 5px;
+      color: #ddd6fe;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-install:hover:not(:disabled) { background: #6d28d9; }
+    .btn-install:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-manual {
+      padding: 11px 14px;
+      background: transparent;
+      border: 1px solid #1e2a3a;
+      border-radius: 5px;
+      color: #475569;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    .btn-manual:hover { border-color: #334155; color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -520,6 +613,28 @@
     </div><!-- /resultsPanel -->
 
   </div>
+  <!-- k6 Install Modal -->
+  <div class="modal-overlay" id="k6Modal">
+    <div class="modal">
+      <div class="modal-icon">⚡</div>
+      <div class="modal-title">k6 Not Installed</div>
+      <div class="modal-desc">
+        k6 is required to run Stress Tests.<br>
+        Click below to install it automatically (~15 MB).
+      </div>
+      <div class="modal-progress" id="modalProgress">
+        <div class="modal-progress-bar">
+          <div class="modal-progress-fill" id="modalProgressFill"></div>
+        </div>
+        <div class="modal-progress-msg" id="modalProgressMsg">Starting…</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-install" id="installK6Btn">⬇ Install k6 Automatically</button>
+        <a class="btn-manual" href="https://k6.io/docs/get-started/installation/" target="_blank">Manual</a>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

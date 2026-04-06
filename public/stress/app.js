@@ -332,13 +332,63 @@ function fmtPct(n) {
   return (n * 100).toFixed(1) + '%';
 }
 
+function showK6Modal() {
+  document.getElementById('k6Modal').classList.add('open');
+}
+
+function hideK6Modal() {
+  document.getElementById('k6Modal').classList.remove('open');
+}
+
+function startK6Install() {
+  const btn     = document.getElementById('installK6Btn');
+  const progress = document.getElementById('modalProgress');
+  const fill    = document.getElementById('modalProgressFill');
+  const msg     = document.getElementById('modalProgressMsg');
+
+  btn.disabled = true;
+  btn.textContent = 'Installing…';
+  progress.classList.add('visible');
+
+  const es = new EventSource('/api/install-k6');
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'progress') {
+      fill.style.width = data.percent + '%';
+      msg.textContent = 'Downloading… ' + data.percent + '%';
+    } else if (data.type === 'status') {
+      msg.textContent = data.message;
+    } else if (data.type === 'done') {
+      fill.style.width = '100%';
+      msg.textContent = data.message;
+      btn.textContent = '✓ Done — reloading…';
+      es.close();
+      setTimeout(() => { hideK6Modal(); checkK6(); }, 1200);
+    } else if (data.type === 'error') {
+      msg.textContent = '✗ ' + data.message;
+      msg.style.color = '#ef4444';
+      btn.disabled = false;
+      btn.textContent = '⬇ Retry';
+      es.close();
+    }
+  };
+  es.onerror = () => {
+    msg.textContent = '✗ Connection error';
+    msg.style.color = '#ef4444';
+    btn.disabled = false;
+    btn.textContent = '⬇ Retry';
+    es.close();
+  };
+}
+
 function checkK6() {
   fetch(api.status).then(res => res.json()).then(data => {
     if (!data.hasK6) {
-      document.getElementById('k6Status').textContent = 'k6 not found. Install from k6.io';
+      document.getElementById('k6Status').textContent = 'k6 not found';
       document.getElementById('k6Status').style.color = '#ef4444';
       document.getElementById('addTestBtn').disabled = true;
       document.getElementById('runAllBtn').disabled = true;
+      showK6Modal();
     } else {
       document.getElementById('k6Status').textContent = 'k6 ' + data.version + ' is ready';
       document.getElementById('k6Status').style.color = '#a78bfa';
@@ -366,6 +416,7 @@ function initFloodgate() {
   checkK6();
   addTestToUI();
 
+  document.getElementById('installK6Btn').addEventListener('click', startK6Install);
   document.getElementById('addTestBtn').addEventListener('click', function() { addTestToUI(); });
   document.getElementById('runAllBtn').addEventListener('click', runAllTests);
   document.getElementById('stopAllBtn').addEventListener('click', stopAllTests);

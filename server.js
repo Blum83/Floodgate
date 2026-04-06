@@ -552,14 +552,96 @@ function parseGatlingSimLog(logPath) {
   };
 }
 
+// ── k6 local install path ────────────────────────────────────────────────────
+const localK6Dir  = path.join(writableBase, 'bin');
+const localK6Path = path.join(localK6Dir, 'k6.exe');
+
+function getK6Cmd() {
+  return fs.existsSync(localK6Path) ? localK6Path : 'k6';
+}
+
+// ── k6 auto-install (SSE) ────────────────────────────────────────────────────
+function downloadFile(url, dest, onProgress) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? require('https') : require('http');
+    mod.get(url, { headers: { 'User-Agent': 'Floodgate/1.0' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return downloadFile(res.headers.location, dest, onProgress).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
+      const total = parseInt(res.headers['content-length'] || '0');
+      let downloaded = 0;
+      const file = fs.createWriteStream(dest);
+      res.on('data', chunk => { downloaded += chunk.length; if (total) onProgress(downloaded, total); });
+      res.pipe(file);
+      file.on('finish', () => file.close(resolve));
+      file.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+app.get('/api/install-k6', (req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+  const send = (type, data) => res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+
+  (async () => {
+    try {
+      send('status', { message: 'Fetching latest k6 version…' });
+
+      const version = await new Promise((resolve, reject) => {
+        require('https').get(
+          'https://api.github.com/repos/grafana/k6/releases/latest',
+          { headers: { 'User-Agent': 'Floodgate/1.0' } },
+          (r) => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d).tag_name); } catch { reject(new Error('Version parse failed')); } }); }
+        ).on('error', reject);
+      });
+
+      send('status', { message: `Downloading k6 ${version} for Windows…` });
+
+      const zipUrl  = `https://github.com/grafana/k6/releases/download/${version}/k6-${version}-windows-amd64.zip`;
+      const zipPath = path.join(writableBase, 'temp', 'k6-install.zip');
+      fs.mkdirSync(path.join(writableBase, 'temp'), { recursive: true });
+
+      await downloadFile(zipUrl, zipPath, (dl, total) => send('progress', { percent: Math.round(dl / total * 100) }));
+
+      send('status', { message: 'Extracting…' });
+      const extractDir = path.join(writableBase, 'temp', 'k6-extract');
+      if (fs.existsSync(extractDir)) fs.rmSync(extractDir, { recursive: true });
+
+      await new Promise((resolve, reject) =>
+        exec(`powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`,
+          (err) => err ? reject(err) : resolve())
+      );
+
+      // k6.exe is inside a subdirectory named k6-vX.Y.Z-windows-amd64
+      let k6exe = null;
+      for (const entry of fs.readdirSync(extractDir)) {
+        const candidate = path.join(extractDir, entry, 'k6.exe');
+        if (fs.existsSync(candidate)) { k6exe = candidate; break; }
+      }
+      if (!k6exe) throw new Error('k6.exe not found in archive');
+
+      fs.mkdirSync(localK6Dir, { recursive: true });
+      fs.copyFileSync(k6exe, localK6Path);
+      fs.unlinkSync(zipPath);
+      fs.rmSync(extractDir, { recursive: true });
+
+      send('done', { message: `k6 ${version} installed successfully!` });
+    } catch (err) {
+      send('error', { message: err.message });
+    }
+    res.end();
+  })();
+});
+
 app.get('/api/status', (req, res) => {
   const result = {};
   let pending = 2;
   const done = () => { if (--pending === 0) res.json(result); };
 
-  exec('k6 version', (err, stdout) => {
+  exec(`"${getK6Cmd()}" version`, (err, stdout) => {
     result.hasK6    = !err;
-    result.version  = err ? null : stdout.trim();  // kept for stress-test page compat
+    result.version  = err ? null : stdout.trim();
     done();
   });
 
@@ -683,7 +765,7 @@ export default function () {
   });
 
   const totalDuration = (rampUp || 0) + duration + 10; // ramp + main + cooldown
-  const proc = spawn('k6', ['run', '--out', `json=${resultsPath}`, '--summary-export', summaryPath, scriptPath]);
+  const proc = spawn(getK6Cmd(), ['run', '--out', `json=${resultsPath}`, '--summary-export', summaryPath, scriptPath]);
 
   // Send progress updates every 2s
   const progressInterval = setInterval(() => {

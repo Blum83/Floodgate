@@ -1,7 +1,6 @@
 # Build output
 dist/
 build/
-C:/FloodgateBuilds/
 
 # Dependencies
 node_modules/

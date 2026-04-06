@@ -185,7 +185,8 @@ app.get('/api/runs/:id', (req, res) => {
   const runs = readData('runs.json');
   const run = runs.find(r => r.id === req.params.id);
   if (!run) return res.status(404).json({ error: 'Not found' });
-  res.json(run);
+  const log = runLogs.get(run.id) || null;
+  res.json({ ...run, log });
 });
 
 // ── Run Scenario API ─────────────────────────────────────────────────────────
@@ -251,8 +252,15 @@ app.post('/api/scenarios/:id/run', (req, res) => {
     '--non-interactive',
   ], { cwd: writableBase });
 
-  proc.stdout.on('data', () => {});
-  proc.stderr.on('data', () => {});
+  // Capture stdout/stderr to surface JVM download progress in the UI
+  const captureLog = (chunk) => {
+    const line = chunk.toString().trim();
+    if (!line) return;
+    // Store last meaningful line for this run (polled by frontend)
+    runLogs.set(runId, line);
+  };
+  proc.stdout.on('data', captureLog);
+  proc.stderr.on('data', captureLog);
 
   proc.on('close', (code) => {
     const allRuns = readData('runs.json');
@@ -279,6 +287,7 @@ app.post('/api/scenarios/:id/run', (req, res) => {
     try { fs.rmSync(simFolder,     { recursive: true, force: true }); } catch {}
     try { fs.rmSync(resultsFolder, { recursive: true, force: true }); } catch {}
 
+    runLogs.delete(runId);
     writeData('runs.json', allRuns);
   });
 
@@ -405,6 +414,9 @@ ${stepCode};
 
 const tempDir = path.join(writableBase, 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+// Live log lines for in-progress Gatling runs (cleared on completion)
+const runLogs = new Map();
 
 // === CONFIGURATION ===
 const MAX_CONCURRENT_TESTS = 5;        // Max concurrent tests allowed

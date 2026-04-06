@@ -96,10 +96,16 @@ async function loadDashboard() {
       <td><span class="uid-badge">${r.id.slice(0,8)}</span></td>
       <td style="color:var(--text)">${esc(r.scenarioName)}</td>
       <td>${esc(r.environmentName)}</td>
-      <td>${statusBadge(r.status)}</td>
+      <td>
+        ${statusBadge(r.status)}
+        ${r.status === 'running' ? `<span class="gatling-badge checking" style="margin-left:6px;font-size:0.58rem"><span id="run-live-log-${r.id}">starting…</span></span>` : ''}
+      </td>
       <td>${fmtDate(r.startedAt)}</td>
     </tr>
   `).join('');
+  // Start polling for any running run
+  const running = runs.find(r => r.status === 'running');
+  if (running) startRunPoller(running.id);
 }
 
 // ── Scenarios ────────────────────────────────────────────────────────────────
@@ -749,9 +755,52 @@ function statusBadge(status) {
   return `<span class="badge ${map[status] || 'badge-blue'}">${status || '—'}</span>`;
 }
 
+// ── Gatling status badge ──────────────────────────────────────────────────────
+async function checkGatlingStatus() {
+  const badge = document.getElementById('gatlingBadge');
+  if (!badge) return;
+  try {
+    const data = await fetchJSON('/api/status');
+    if (data.hasGatling) {
+      const ver = (data.gatlingVersion || '').split('\n')[0].trim().slice(0, 30);
+      badge.className = 'gatling-badge ready';
+      badge.textContent = '⬡ Gatling ' + (ver || 'ready');
+    } else {
+      badge.className = 'gatling-badge checking';
+      badge.textContent = '⬡ Gatling not found';
+    }
+  } catch {
+    badge.className = 'gatling-badge checking';
+    badge.textContent = '⬡ Gatling…';
+  }
+}
+
+// Poll a running run and show live log in the runs table
+let runPoller = null;
+function startRunPoller(runId) {
+  if (runPoller) clearInterval(runPoller);
+  runPoller = setInterval(async () => {
+    try {
+      const run = await fetchJSON(`/api/runs/${runId}`);
+      const logEl = document.getElementById('run-live-log-' + runId);
+      if (logEl && run.log) {
+        const isDownload = /download|fetch|install|progress/i.test(run.log);
+        logEl.parentElement.className = 'gatling-badge ' + (isDownload ? 'download' : 'checking');
+        logEl.textContent = run.log.length > 60 ? run.log.slice(0, 60) + '…' : run.log;
+      }
+      if (run.status !== 'running') {
+        clearInterval(runPoller);
+        runPoller = null;
+        loadRuns();
+      }
+    } catch { clearInterval(runPoller); runPoller = null; }
+  }, 1500);
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   await loadEnvSelector();
+  checkGatlingStatus();
 
   // Single listener for the global environment selector — added once here to
   // avoid duplicating listeners each time loadEnvSelector() is called.

@@ -258,7 +258,12 @@ appGatling.post('/api/scenarios/:id/run', (req, res) => {
     '--bundle-file',     path.join(resultsFolder, 'bundle.js'),
     '--results-folder',  resultsFolder,
     '--non-interactive',
-  ], { cwd: writableBase });
+  ], {
+    cwd: writableBase,
+    // In a packaged Electron app process.execPath is the app binary, not node.
+    // ELECTRON_RUN_AS_NODE=1 makes it behave as Node.js while keeping ASAR support.
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
 
   // Capture stdout/stderr to surface JVM download progress in the UI
   const captureLog = (chunk) => {
@@ -724,8 +729,10 @@ appK6.get('/api/status', (req, res) => {
 
 appGatling.get('/api/status', (req, res) => {
   try {
-    const depsPath = unpackedPath('node_modules', '@gatling.io', 'cli', 'target', 'dependencies', 'index.js');
-    const { versions } = require(depsPath);
+    // Require only versions.js (no external deps) so it resolves correctly
+    // from app.asar.unpacked on Windows without needing node-stream-zip.
+    const versionsPath = unpackedPath('node_modules', '@gatling.io', 'cli', 'target', 'dependencies', 'versions.js');
+    const { versions } = require(versionsPath);
     res.json({ hasGatling: true, gatlingVersion: versions.gatling.jsAdapter });
   } catch {
     res.json({ hasGatling: false, gatlingVersion: null });

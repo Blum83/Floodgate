@@ -19,7 +19,8 @@
       "Bash(powershell -Command \"Stop-Service WSearch -Force -ErrorAction SilentlyContinue; Start-Sleep 1; Remove-Item -Recurse -Force 'F:\\\\work\\\\Floodgate\\\\dist' -ErrorAction SilentlyContinue; Start-Sleep 1; if \\(Test-Path 'F:\\\\work\\\\Floodgate\\\\dist'\\) { Write-Output 'still locked' } else { Write-Output 'deleted OK' }\")",
       "Bash(powershell -Command 'Get-Process node, npm -ErrorAction SilentlyContinue | Select-Object Name, Id, CommandLine 2>/dev/null; Get-Process | Where-Object { $_.MainWindowTitle -match '\\\\''Floodgate'\\\\'' } | Select-Object Name, Id 2>/dev/null')",
       "Bash(powershell -Command \"Get-Process node, npm -ErrorAction SilentlyContinue | Select-Object Name, Id\")",
-      "Bash(node --check f:/work/Floodgate/public/scenario/app.js)"
+      "Bash(node --check f:/work/Floodgate/public/scenario/app.js)",
+      "Bash(node -e \"const { versions } = require\\('f:/work/Floodgate/node_modules/@gatling.io/cli/target/dependencies/index.js'\\); console.log\\(JSON.stringify\\(versions\\)\\)\")"
     ]
   }
 }

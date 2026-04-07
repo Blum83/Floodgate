@@ -590,8 +590,10 @@ function parseGatlingSimLog(logPath) {
 }
 
 // ── k6 local install path ────────────────────────────────────────────────────
+const isWindows   = process.platform === 'win32';
+const k6Binary    = isWindows ? 'k6.exe' : 'k6';
 const localK6Dir  = path.join(writableBase, 'bin');
-const localK6Path = path.join(localK6Dir, 'k6.exe');
+const localK6Path = path.join(localK6Dir, k6Binary);
 
 function getK6Cmd() {
   return fs.existsSync(localK6Path) ? localK6Path : 'k6';
@@ -633,35 +635,67 @@ app.get('/api/install-k6', (req, res) => {
         ).on('error', reject);
       });
 
-      send('status', { message: `Downloading k6 ${version} for Windows…` });
-
-      const zipUrl  = `https://github.com/grafana/k6/releases/download/${version}/k6-${version}-windows-amd64.zip`;
-      const zipPath = path.join(writableBase, 'temp', 'k6-install.zip');
-      fs.mkdirSync(path.join(writableBase, 'temp'), { recursive: true });
-
-      await downloadFile(zipUrl, zipPath, (dl, total) => send('progress', { percent: Math.round(dl / total * 100) }));
-
-      send('status', { message: 'Extracting…' });
-      const extractDir = path.join(writableBase, 'temp', 'k6-extract');
-      if (fs.existsSync(extractDir)) fs.rmSync(extractDir, { recursive: true });
-
-      await new Promise((resolve, reject) =>
-        exec(`powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`,
-          (err) => err ? reject(err) : resolve())
-      );
-
-      // k6.exe is inside a subdirectory named k6-vX.Y.Z-windows-amd64
-      let k6exe = null;
-      for (const entry of fs.readdirSync(extractDir)) {
-        const candidate = path.join(extractDir, entry, 'k6.exe');
-        if (fs.existsSync(candidate)) { k6exe = candidate; break; }
-      }
-      if (!k6exe) throw new Error('k6.exe not found in archive');
-
+      const tempDir = path.join(writableBase, 'temp');
+      fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(localK6Dir, { recursive: true });
-      fs.copyFileSync(k6exe, localK6Path);
-      fs.unlinkSync(zipPath);
-      fs.rmSync(extractDir, { recursive: true });
+
+      const extractDir = path.join(tempDir, 'k6-extract');
+      if (fs.existsSync(extractDir)) fs.rmSync(extractDir, { recursive: true });
+      fs.mkdirSync(extractDir, { recursive: true });
+
+      if (isWindows) {
+        send('status', { message: `Downloading k6 ${version} for Windows…` });
+        const zipUrl  = `https://github.com/grafana/k6/releases/download/${version}/k6-${version}-windows-amd64.zip`;
+        const zipPath = path.join(tempDir, 'k6-install.zip');
+
+        await downloadFile(zipUrl, zipPath, (dl, total) => send('progress', { percent: Math.round(dl / total * 100) }));
+
+        send('status', { message: 'Extracting…' });
+        await new Promise((resolve, reject) =>
+          exec(`powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`,
+            (err) => err ? reject(err) : resolve())
+        );
+
+        let k6exe = null;
+        for (const entry of fs.readdirSync(extractDir)) {
+          const candidate = path.join(extractDir, entry, 'k6.exe');
+          if (fs.existsSync(candidate)) { k6exe = candidate; break; }
+        }
+        if (!k6exe) throw new Error('k6.exe not found in archive');
+
+        fs.copyFileSync(k6exe, localK6Path);
+        fs.unlinkSync(zipPath);
+        fs.rmSync(extractDir, { recursive: true });
+      } else {
+        // macOS / Linux
+        const arch    = process.arch === 'arm64' ? 'arm64' : 'amd64';
+        const platform = process.platform === 'darwin' ? 'macos' : 'linux';
+        send('status', { message: `Downloading k6 ${version} for ${platform} (${arch})…` });
+
+        const zipName = `k6-${version}-${platform}-${arch}.zip`;
+        const zipUrl  = `https://github.com/grafana/k6/releases/download/${version}/${zipName}`;
+        const zipPath = path.join(tempDir, 'k6-install.zip');
+
+        await downloadFile(zipUrl, zipPath, (dl, total) => send('progress', { percent: Math.round(dl / total * 100) }));
+
+        send('status', { message: 'Extracting…' });
+        await new Promise((resolve, reject) =>
+          exec(`unzip -o '${zipPath}' -d '${extractDir}'`,
+            (err) => err ? reject(err) : resolve())
+        );
+
+        let k6bin = null;
+        for (const entry of fs.readdirSync(extractDir)) {
+          const candidate = path.join(extractDir, entry, 'k6');
+          if (fs.existsSync(candidate)) { k6bin = candidate; break; }
+        }
+        if (!k6bin) throw new Error('k6 binary not found in archive');
+
+        fs.copyFileSync(k6bin, localK6Path);
+        fs.chmodSync(localK6Path, 0o755);
+        fs.unlinkSync(zipPath);
+        fs.rmSync(extractDir, { recursive: true });
+      }
 
       send('done', { message: `k6 ${version} installed successfully!` });
     } catch (err) {

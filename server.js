@@ -27,14 +27,21 @@ function unpackedPath(...parts) {
 // Ensure writable base exists
 if (!fs.existsSync(writableBase)) fs.mkdirSync(writableBase, { recursive: true });
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+// ── k6 server (port 3847) — stress tests ──────────────────────────────────
+const appK6 = express();
+appK6.use(cors());
+appK6.use(express.json());
+appK6.use(express.static(path.join(__dirname, 'public')));
+appK6.use('/stress', express.static(path.join(__dirname, 'public', 'stress')));
 
-// Serve /stress/ and /scenario/ as SPA directories
-app.use('/stress', express.static(path.join(__dirname, 'public', 'stress')));
-app.use('/scenario', express.static(path.join(__dirname, 'public', 'scenario')));
+// ── Gatling server (port 3848) — scenarios ─────────────────────────────────
+const appGatling = express();
+appGatling.use(cors());
+appGatling.use(express.json());
+appGatling.use(express.static(path.join(__dirname, 'public', 'scenario')));
+
+// Alias for shared route registration
+const app = appK6;
 
 // ── Data layer ──────────────────────────────────────────────────────────────
 // data/ is in asarUnpack so it's always writable via unpackedPath
@@ -84,12 +91,12 @@ function toGatlingEL(str) {
   return escJSStr(String(str == null ? '' : str).replace(/\{\{(\w+)\}\}/g, '#{$1}'));
 }
 
-// ── Environments API ─────────────────────────────────────────────────────────
-app.get('/api/environments', (req, res) => {
+// ── Environments API (Gatling server) ────────────────────────────────────────
+appGatling.get('/api/environments', (req, res) => {
   res.json(readData('environments.json'));
 });
 
-app.post('/api/environments', (req, res) => {
+appGatling.post('/api/environments', (req, res) => {
   const { name, host, description } = req.body;
   if (!name || !host) return res.status(400).json({ error: 'name and host are required' });
   const envs = readData('environments.json');
@@ -99,7 +106,7 @@ app.post('/api/environments', (req, res) => {
   res.status(201).json(env);
 });
 
-app.put('/api/environments/:id', (req, res) => {
+appGatling.put('/api/environments/:id', (req, res) => {
   const envs = readData('environments.json');
   const idx = envs.findIndex(e => e.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
@@ -110,7 +117,7 @@ app.put('/api/environments/:id', (req, res) => {
   res.json(envs[idx]);
 });
 
-app.delete('/api/environments/:id', (req, res) => {
+appGatling.delete('/api/environments/:id', (req, res) => {
   const envs = readData('environments.json');
   const filtered = envs.filter(e => e.id !== req.params.id);
   if (filtered.length === envs.length) return res.status(404).json({ error: 'Not found' });
@@ -118,19 +125,19 @@ app.delete('/api/environments/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Scenarios API ────────────────────────────────────────────────────────────
-app.get('/api/scenarios', (req, res) => {
+// ── Scenarios API (Gatling server) ───────────────────────────────────────────
+appGatling.get('/api/scenarios', (req, res) => {
   res.json(readData('scenarios.json'));
 });
 
-app.get('/api/scenarios/:id', (req, res) => {
+appGatling.get('/api/scenarios/:id', (req, res) => {
   const scenarios = readData('scenarios.json');
   const s = scenarios.find(s => s.id === req.params.id);
   if (!s) return res.status(404).json({ error: 'Not found' });
   res.json(s);
 });
 
-app.post('/api/scenarios', (req, res) => {
+appGatling.post('/api/scenarios', (req, res) => {
   const { name, description, steps } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
   const scenarios = readData('scenarios.json');
@@ -147,7 +154,7 @@ app.post('/api/scenarios', (req, res) => {
   res.status(201).json(scenario);
 });
 
-app.put('/api/scenarios/:id', (req, res) => {
+appGatling.put('/api/scenarios/:id', (req, res) => {
   const scenarios = readData('scenarios.json');
   const idx = scenarios.findIndex(s => s.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
@@ -158,7 +165,7 @@ app.put('/api/scenarios/:id', (req, res) => {
   res.json(scenarios[idx]);
 });
 
-app.delete('/api/scenarios/:id', (req, res) => {
+appGatling.delete('/api/scenarios/:id', (req, res) => {
   const scenarios = readData('scenarios.json');
   const filtered = scenarios.filter(s => s.id !== req.params.id);
   if (filtered.length === scenarios.length) return res.status(404).json({ error: 'Not found' });
@@ -166,8 +173,8 @@ app.delete('/api/scenarios/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Runs API ─────────────────────────────────────────────────────────────────
-app.get('/api/runs', (req, res) => {
+// ── Runs API (Gatling server) ─────────────────────────────────────────────────
+appGatling.get('/api/runs', (req, res) => {
   let runs = readData('runs.json');
   const { scenarioId, environmentId, from, to, page = 1, limit = 20 } = req.query;
   if (scenarioId) runs = runs.filter(r => r.scenarioId === scenarioId);
@@ -181,7 +188,7 @@ app.get('/api/runs', (req, res) => {
   res.json({ items, total, page: Number(page), limit: Number(limit) });
 });
 
-app.get('/api/runs/:id', (req, res) => {
+appGatling.get('/api/runs/:id', (req, res) => {
   const runs = readData('runs.json');
   const run = runs.find(r => r.id === req.params.id);
   if (!run) return res.status(404).json({ error: 'Not found' });
@@ -189,8 +196,8 @@ app.get('/api/runs/:id', (req, res) => {
   res.json({ ...run, log });
 });
 
-// ── Run Scenario API ─────────────────────────────────────────────────────────
-app.post('/api/scenarios/:id/run', (req, res) => {
+// ── Run Scenario API (Gatling server) ────────────────────────────────────────
+appGatling.post('/api/scenarios/:id/run', (req, res) => {
   const scenarios = readData('scenarios.json');
   const scenario = scenarios.find(s => s.id === req.params.id);
   if (!scenario) return res.status(404).json({ error: 'Scenario not found' });
@@ -705,26 +712,24 @@ app.get('/api/install-k6', (req, res) => {
   })();
 });
 
-app.get('/api/status', (req, res) => {
-  const result = {};
-  let pending = 2;
-  const done = () => { if (--pending === 0) res.json(result); };
-
+// ── Status API: k6 server checks k6, Gatling server checks Gatling ───────────
+appK6.get('/api/status', (req, res) => {
   exec(`"${getK6Cmd()}" version`, (err, stdout) => {
-    result.hasK6    = !err;
-    result.version  = err ? null : stdout.trim();
-    done();
+    res.json({
+      hasK6:   !err,
+      version: err ? null : stdout.trim(),
+    });
   });
+});
 
-  const gatlingCliStatus = unpackedPath('node_modules', '@gatling.io', 'cli', 'target', 'index.js');
-  exec(`"${process.execPath}" "${gatlingCliStatus}" --version`, { timeout: 10000 }, (err, stdout) => {
-    const out = (stdout || '').trim();
-    result.hasGatling     = !err;
-    result.gatlingVersion = result.hasGatling
-      ? (out.match(/(\d+\.\d+\.\d+)/)?.[1] ?? out.slice(0, 60))
-      : null;
-    done();
-  });
+appGatling.get('/api/status', (req, res) => {
+  try {
+    const depsPath = unpackedPath('node_modules', '@gatling.io', 'cli', 'target', 'dependencies', 'index.js');
+    const { versions } = require(depsPath);
+    res.json({ hasGatling: true, gatlingVersion: versions.gatling.jsAdapter });
+  } catch {
+    res.json({ hasGatling: false, gatlingVersion: null });
+  }
 });
 
 app.post('/api/run-test', (req, res) => {
@@ -1048,11 +1053,15 @@ app.get('/api/active-tests', (req, res) => {
   });
 });
 
-const server = app.listen(3000, () => console.log('Floodgate running on http://localhost:3000'));
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.log('Port 3000 already in use — another instance may be running.');
-  } else {
-    console.error('Server error:', err);
-  }
+// ── Start both servers ────────────────────────────────────────────────────────
+const serverK6 = appK6.listen(3847, () => console.log('Floodgate k6      → http://localhost:3847'));
+serverK6.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') console.log('Port 3847 already in use.');
+  else console.error('k6 server error:', err);
+});
+
+const serverGatling = appGatling.listen(3848, () => console.log('Floodgate Gatling → http://localhost:3848'));
+serverGatling.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') console.log('Port 3848 already in use.');
+  else console.error('Gatling server error:', err);
 });

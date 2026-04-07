@@ -26,7 +26,7 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadURL('http://localhost:3000');
+  mainWindow.loadURL('http://localhost:3847');
 
   // Open external links in the system browser, not in-app
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

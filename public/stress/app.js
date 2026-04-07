@@ -41,6 +41,41 @@ function addHeaderRow(testId, key, value) {
   container.appendChild(row);
 }
 
+function addProxyRow(testId, value) {
+  value = value || '';
+  const container = document.getElementById('proxies-' + testId);
+  if (!container) return;
+  const row = document.createElement('div');
+  row.className = 'proxy-row';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'http://1.2.3.4:8080 or socks5://user:pass@host:port';
+  input.value = value;
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'btn-sm';
+  removeBtn.textContent = '✕';
+  removeBtn.addEventListener('click', function(){ row.remove(); });
+
+  row.appendChild(input);
+  row.appendChild(removeBtn);
+  container.appendChild(row);
+}
+
+function collectProxies(testId) {
+  var proxies = [];
+  var container = document.getElementById('proxies-' + testId);
+  if (!container) return proxies;
+  container.querySelectorAll('.proxy-row').forEach(function(row){
+    var input = row.querySelector('input');
+    var val = input ? input.value.trim() : '';
+    if (val) proxies.push(val);
+  });
+  return proxies;
+}
+
 function collectHeaders(testId) {
   var headers = {};
   var container = document.getElementById('headers-' + testId);
@@ -109,8 +144,9 @@ function createTestCard(testId, config) {
         </div>
       </div>
       <div class="field spacer">
-        <label>Proxies <span style="color:#334155;font-size:0.6rem">(optional — one per line, distributed across VUs)</span></label>
-        <textarea id="proxies-${testId}" rows="2" placeholder="http://1.2.3.4:8080&#10;socks5://user:pass@5.6.7.8:1080" style="font-size:0.72rem;resize:vertical"></textarea>
+        <label>Proxies <span style="color:#334155;font-size:0.6rem">(optional — distributed across VUs)</span></label>
+        <div id="proxies-${testId}" style="display:flex;flex-direction:column;gap:4px"></div>
+        <button type="button" class="add-proxy-btn btn-sm" data-testid="${testId}" style="margin-top:4px">+ Add Proxy</button>
       </div>
     </form>
     <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #1e2a3a;">
@@ -203,8 +239,7 @@ function collectConfig(testId) {
     vus: Number(document.getElementById(`vus-${testId}`).value),
     duration: Number(document.getElementById(`duration-${testId}`).value),
     rampUp: Number(document.getElementById(`rampUp-${testId}`).value) || 0,
-    proxies: (document.getElementById(`proxies-${testId}`)?.value || '')
-      .split('\n').map(s => s.trim()).filter(Boolean),
+    proxies: collectProxies(testId),
   };
 }
 
@@ -449,6 +484,11 @@ function initFloodgate() {
 
     if (target.classList.contains('add-header-btn') && target.dataset.testid) {
       addHeaderRow(target.dataset.testid, '', '');
+      return;
+    }
+
+    if (target.classList.contains('add-proxy-btn') && target.dataset.testid) {
+      addProxyRow(target.dataset.testid, '');
       return;
     }
 

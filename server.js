@@ -201,6 +201,7 @@ app.post('/api/scenarios/:id/run', (req, res) => {
     loadModel = 'vus',
     arrivalRate = 10,
     preAllocatedVUs = 50,
+    proxy = null,
   } = req.body;
   const envs = readData('environments.json');
   const env = envs.find(e => e.id === environmentId);
@@ -217,7 +218,7 @@ app.post('/api/scenarios/:id/run', (req, res) => {
   fs.mkdirSync(simFolder,     { recursive: true });
   fs.mkdirSync(resultsFolder, { recursive: true });
 
-  const simContent = generateGatlingSimulation({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs });
+  const simContent = generateGatlingSimulation({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs, proxy });
   fs.writeFileSync(path.join(simFolder, 'FloodgateSimulation.gatling.js'), simContent, 'utf8');
 
   const runs = readData('runs.json');
@@ -295,7 +296,21 @@ app.post('/api/scenarios/:id/run', (req, res) => {
 });
 
 // ── Gatling Simulation Generator ────────────────────────────────────────────
-function generateGatlingSimulation({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs }) {
+function parseProxyUrl(raw) {
+  try {
+    const u = new URL(raw.trim());
+    return {
+      host: u.hostname,
+      port: parseInt(u.port) || 8080,
+      user: u.username || null,
+      pass: u.password || null,
+      socks: u.protocol.startsWith('socks'),
+      socksVer: u.protocol === 'socks5:' ? 5 : 4,
+    };
+  } catch { return null; }
+}
+
+function generateGatlingSimulation({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs, proxy }) {
   const steps = scenario.steps;
   const baseUrl = escJSStr(env.host);
 
@@ -385,20 +400,30 @@ function generateGatlingSimulation({ scenario, env, vus, duration, rampUp, loadM
       : `constantConcurrentUsers(${vus}).during(${duration})`;
   }
 
+  const parsedProxy = proxy ? parseProxyUrl(proxy) : null;
+  const proxyImport = parsedProxy ? ', Proxy' : '';
+  let proxyChain = '';
+  if (parsedProxy) {
+    proxyChain = `\n    .proxy(Proxy("${parsedProxy.host}", ${parsedProxy.port})`;
+    if (parsedProxy.socks) proxyChain += `.socks(${parsedProxy.socksVer})`;
+    if (parsedProxy.user)  proxyChain += `.credentials("${parsedProxy.user}", "${parsedProxy.pass}")`;
+    proxyChain += ')';
+  }
+
   return `import {
   simulation, scenario,
   jsonPath, bodyString, responseTimeInMillis, StringBody,
   constantConcurrentUsers, rampConcurrentUsers,
   constantUsersPerSec, rampUsersPerSec,
 } from "@gatling.io/core";
-import { http, status } from "@gatling.io/http";
+import { http, status${proxyImport} } from "@gatling.io/http";
 
 export default simulation((setUp) => {
   const httpProtocol = http
     .baseUrl("${baseUrl}")
     .acceptHeader("application/json, */*")
     .acceptEncodingHeader("gzip, deflate")
-    .userAgentHeader("Floodgate/1.0");
+    .userAgentHeader("Floodgate/1.0")${proxyChain};
 
   const scn = scenario("${escJSStr(scenario.name)}")
 ${stepCode};
@@ -669,7 +694,7 @@ app.get('/api/status', (req, res) => {
 });
 
 app.post('/api/run-test', (req, res) => {
-  const { action, testId: stopTestId, url, method, vus, duration, rampUp, headers, body } = req.body;
+  const { action, testId: stopTestId, url, method, vus, duration, rampUp, headers, body, proxies } = req.body;
 
   // Handle stop action first
   if (action === 'stop' && stopTestId) {
@@ -730,6 +755,13 @@ app.post('/api/run-test', (req, res) => {
   const headersLiteral = JSON.stringify(headers || {});
   const bodyLiteral = hasBody ? JSON.stringify(body) : 'null';
 
+  const proxyList = Array.isArray(proxies) ? proxies.filter(Boolean) : [];
+  const proxyBlock = proxyList.length
+    ? `const __proxies = ${JSON.stringify(proxyList)};
+const __proxy = __proxies[(__VU - 1) % __proxies.length];`
+    : '';
+  const proxyParam = proxyList.length ? ', proxy: __proxy' : '';
+
   const script = `import http from 'k6/http';
 import { sleep } from 'k6';
 import { Counter } from 'k6/metrics';
@@ -739,7 +771,7 @@ const status_3xx = new Counter('status_3xx');
 const status_4xx = new Counter('status_4xx');
 const status_5xx = new Counter('status_5xx');
 const status_other = new Counter('status_other');
-
+${proxyBlock}
 export const options = {
   stages: [
     { duration: '${rampUp}s', target: ${vus} },
@@ -749,7 +781,7 @@ export const options = {
 };
 
 export default function () {
-  const res = http.${normalizedMethod}('${url}', ${hasBody ? bodyLiteral : 'null'}, { headers: ${headersLiteral} });
+  const res = http.${normalizedMethod}('${url}', ${hasBody ? bodyLiteral : 'null'}, { headers: ${headersLiteral}${proxyParam} });
   const s = res.status;
   if (s >= 200 && s < 300) status_2xx.add(1);
   else if (s >= 300 && s < 400) status_3xx.add(1);

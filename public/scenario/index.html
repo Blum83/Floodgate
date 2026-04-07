@@ -970,6 +970,16 @@
           Open model: fixed arrival rate of new users regardless of server response time.
         </p>
       </div>
+      <div class="field" style="margin-top:16px">
+        <label style="font-size:0.62rem;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase">
+          Proxy <span style="color:var(--muted);font-size:0.58rem;text-transform:none;letter-spacing:0">(optional)</span>
+        </label>
+        <input type="text" id="run-modal-proxy" placeholder="http://host:port or socks5://user:pass@host:port"
+          style="font-size:0.75rem">
+        <p style="font-size:0.6rem;color:var(--muted);margin:4px 0 0">
+          All VUs will route through this proxy. Leave empty to connect directly.
+        </p>
+      </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
         <button class="btn btn-ghost" onclick="closeRunModal()">Cancel</button>
         <button class="btn btn-green" onclick="startRun()" id="run-modal-start-btn">Run</button>

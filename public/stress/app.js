@@ -108,6 +108,10 @@ function createTestCard(testId, config) {
           <input type="number" id="rampUp-${testId}" min="0" value="${config.rampUp || 0}">
         </div>
       </div>
+      <div class="field spacer">
+        <label>Proxies <span style="color:#334155;font-size:0.6rem">(optional — one per line, distributed across VUs)</span></label>
+        <textarea id="proxies-${testId}" rows="2" placeholder="http://1.2.3.4:8080&#10;socks5://user:pass@5.6.7.8:1080" style="font-size:0.72rem;resize:vertical"></textarea>
+      </div>
     </form>
     <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #1e2a3a;">
       <button type="button" class="run-one-btn run-btn" data-testid="${testId}">▶ Run This Test</button>
@@ -198,7 +202,9 @@ function collectConfig(testId) {
     body: document.getElementById(`body-${testId}`).value.trim(),
     vus: Number(document.getElementById(`vus-${testId}`).value),
     duration: Number(document.getElementById(`duration-${testId}`).value),
-    rampUp: Number(document.getElementById(`rampUp-${testId}`).value) || 0
+    rampUp: Number(document.getElementById(`rampUp-${testId}`).value) || 0,
+    proxies: (document.getElementById(`proxies-${testId}`)?.value || '')
+      .split('\n').map(s => s.trim()).filter(Boolean),
   };
 }
 

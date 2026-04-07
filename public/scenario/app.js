@@ -617,6 +617,9 @@ async function startRun() {
     payload.rampUp   = Number(document.getElementById('run-modal-rampup').value) || 0;
   }
 
+  const proxy = (document.getElementById('run-modal-proxy')?.value || '').trim();
+  if (proxy) payload.proxy = proxy;
+
   const btn = document.getElementById('run-modal-start-btn');
   btn.disabled = true;
   btn.textContent = 'Starting...';

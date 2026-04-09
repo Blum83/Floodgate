@@ -20,7 +20,9 @@
       "Bash(powershell -Command 'Get-Process node, npm -ErrorAction SilentlyContinue | Select-Object Name, Id, CommandLine 2>/dev/null; Get-Process | Where-Object { $_.MainWindowTitle -match '\\\\''Floodgate'\\\\'' } | Select-Object Name, Id 2>/dev/null')",
       "Bash(powershell -Command \"Get-Process node, npm -ErrorAction SilentlyContinue | Select-Object Name, Id\")",
       "Bash(node --check f:/work/Floodgate/public/scenario/app.js)",
-      "Bash(node -e \"const { versions } = require\\('f:/work/Floodgate/node_modules/@gatling.io/cli/target/dependencies/index.js'\\); console.log\\(JSON.stringify\\(versions\\)\\)\")"
+      "Bash(node -e \"const { versions } = require\\('f:/work/Floodgate/node_modules/@gatling.io/cli/target/dependencies/index.js'\\); console.log\\(JSON.stringify\\(versions\\)\\)\")",
+      "Bash(gh repo:*)",
+      "Bash(npx electron-builder:*)"
     ]
   }
 }

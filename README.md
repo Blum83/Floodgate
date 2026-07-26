@@ -1,6 +1,6 @@
 # Floodgate
 
-A desktop load testing tool with two modes: **Stress Testing** (powered by k6) and **Scenario Testing** (powered by Gatling). Built as an Electron app with a Node.js/Express backend and vanilla JavaScript frontend.
+A desktop load testing tool with two modes: **Stress Testing** and **Scenario Testing**, both powered by k6. Built as an Electron app with a Node.js/Express backend and vanilla JavaScript frontend.
 
 ## Features
 
@@ -14,7 +14,7 @@ A desktop load testing tool with two modes: **Stress Testing** (powered by k6) a
 - **Results visualization**: Latency distribution chart + status code pie chart (Chart.js)
 - **Auto k6 install**: Downloads and installs k6 automatically on first use (Windows/macOS)
 
-### Scenario Testing (Gatling)
+### Scenario Testing (k6)
 - **Multi-step user journeys**: Build workflows with ordered HTTP steps
 - **Variable templating**: Extract values from responses using JSONPath (`varName ← $.json.path`) and reuse them in subsequent steps via `{{variable}}`
 - **Response checks**: Validate HTTP status, max response time, body contains assertions
@@ -22,9 +22,9 @@ A desktop load testing tool with two modes: **Stress Testing** (powered by k6) a
 - **Two load models**: Closed (fixed VUs) or Open (arrival rate)
 - **Environment management**: Define named environments (dev/staging/prod) with base URLs
 - **Run history & analytics**: Paginated run history with filters (date, scenario, environment)
+- **Live progress via SSE**: Real-time progress while a run is in flight
 - **Metrics dashboard**: Total requests, RPS, latency percentiles, success/failure counts
 - **Historical trends**: Chart view of latency and status across runs
-- **Auto Gatling install**: JVM and Gatling CLI downloaded automatically on first use
 
 ### General
 - **Electron desktop app**: Single-instance, native title bar, system browser for external links
@@ -36,9 +36,9 @@ A desktop load testing tool with two modes: **Stress Testing** (powered by k6) a
 ## Stack
 
 - **Desktop**: Electron 33
-- **Backend**: Node.js + Express (dual servers on ports 3847 & 3848)
+- **Backend**: Node.js + Express (single server on port 3847)
 - **Frontend**: Vanilla JS + HTML + Chart.js
-- **Load engines**: k6 (stress), Gatling JS DSL (scenarios)
+- **Load engine**: k6 (both modes)
 
 ## Installation
 
@@ -47,7 +47,7 @@ Download the latest release for your platform from the [Releases](https://github
 - **Windows**: Run `Floodgate Setup 1.0.0.exe` (installer) or extract `Floodgate-1.0.0-win.zip` (portable)
 - **macOS**: Open `Floodgate-1.0.0.dmg` and drag to Applications
 
-k6 and Gatling are installed automatically on first use — no manual setup required.
+k6 is installed automatically on first use — no manual setup required.
 
 ## Development
 
@@ -64,7 +64,7 @@ npm run dist           # build all platforms
 ```
 floodgate/
 ├── main.js              # Electron entry, zoom control, single-instance lock
-├── server.js            # Dual Express servers, all APIs, k6 & Gatling process management
+├── server.js            # Express server, all APIs, k6 process management
 ├── public/
 │   ├── index.html       # Landing page (mode selector)
 │   ├── stress/
@@ -74,7 +74,7 @@ floodgate/
 │       ├── index.html   # Scenario UI (editor, runs, dashboard, history)
 │       └── app.js       # Scenario frontend logic
 ├── data/                # Default JSON data (scenarios, environments, runs)
-├── temp/                # Generated k6 scripts & Gatling sims (auto-created)
+├── temp/                # Generated k6 scripts (auto-created)
 ├── build/               # App icons
 └── scripts/
     └── generate-icons.js
@@ -89,7 +89,9 @@ floodgate/
 | `TEST_EXPIRY_MS` | 5 min | Auto-cleanup completed tests |
 | `MAX_OUTPUT_SIZE` | 5 MB | Per-test stdout/stderr buffer limit |
 
-## API (Stress — port 3847)
+## API (port 3847)
+
+### Stress
 
 ### `POST /api/run-test`
 Start a stress test.
@@ -116,12 +118,40 @@ Final parsed k6 metrics.
 ### `GET /api/active-tests`
 List active tests, slot/VUS availability.
 
+### Scenario
+
+Scenario runs share the concurrency and VUS budget above — both modes drive k6.
+
+### `POST /api/scenarios/:id/run`
+Start a scenario run.
+```json
+{
+  "environmentId": "env123",
+  "loadModel": "vus",
+  "vus": 10,
+  "duration": 30,
+  "rampUp": 5,
+  "proxy": "http://proxy:8080"
+}
+```
+For `"loadModel": "arrival-rate"`, pass `arrivalRate` and `preAllocatedVUs` instead of `vus`.
+Returns `{ "runId": "abc123", "status": "running" }`
+
+### `GET /api/runs/:id/progress`
+SSE stream while the run is in flight (same event types as `/api/progress/:testId`).
+Returns plain JSON `{ done, status, metrics }` once the run has finished.
+
+### `GET /api/runs/:id`
+Stored run record with final metrics.
+
+### `GET /api/scenarios`, `/api/environments`
+CRUD for scenarios and environments.
+
 ## Troubleshooting
 
 - **k6 not found**: Click the status badge in the UI to trigger auto-install
-- **Gatling not ready**: Wait for the readiness badge to turn green on first launch (JVM download)
 - **Progress stuck at 95%**: Test is still in cooldown phase; wait for k6 to finish
-- **Port in use**: Ensure nothing else is running on ports 3847 or 3848
+- **Port in use**: Ensure nothing else is running on port 3847
 
 ## License
 

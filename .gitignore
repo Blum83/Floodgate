@@ -2,6 +2,9 @@
 dist/
 build/
 
+# Auto-downloaded k6 binary
+bin/
+
 # Dependencies
 node_modules/
 package-lock.json

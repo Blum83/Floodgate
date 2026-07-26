@@ -33,9 +33,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/stress',   express.static(path.join(__dirname, 'public', 'stress')));
 app.use('/scenario', express.static(path.join(__dirname, 'public', 'scenario')));
 
-// Aliases so the existing per-mode route registrations keep reading naturally
-const appK6 = app;
-const appGatling = app;
 
 // ── Data layer ──────────────────────────────────────────────────────────────
 // data/ is in asarUnpack so it's always writable via unpackedPath
@@ -54,43 +51,12 @@ function makeId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 }
 
-// Escape a string for safe embedding inside a JS template literal (`...`)
-function escJS(str) {
-  return String(str == null ? '' : str)
-    .replace(/\\/g, '\\\\')
-    .replace(/`/g, '\\`')
-    .replace(/\$\{/g, '\\${');
-}
-
-// Escape a string for safe embedding inside a JS single-quoted string ('...')
-function escJSSingle(str) {
-  return String(str == null ? '' : str)
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'");
-}
-
-// Escape a string for embedding inside a JS double-quoted string literal.
-// Does NOT touch # or { so Gatling EL expressions (#{variable}) pass through intact.
-function escJSStr(str) {
-  return String(str == null ? '' : str)
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
-}
-
-// Convert {{variable}} placeholders to Gatling EL #{variable}, then JS-escape.
-function toGatlingEL(str) {
-  return escJSStr(String(str == null ? '' : str).replace(/\{\{(\w+)\}\}/g, '#{$1}'));
-}
-
-// ── Environments API (Gatling server) ────────────────────────────────────────
-appGatling.get('/api/environments', (req, res) => {
+// ── Environments API ─────────────────────────────────────────────────────────
+app.get('/api/environments', (req, res) => {
   res.json(readData('environments.json'));
 });
 
-appGatling.post('/api/environments', (req, res) => {
+app.post('/api/environments', (req, res) => {
   const { name, host, description } = req.body;
   if (!name || !host) return res.status(400).json({ error: 'name and host are required' });
   const envs = readData('environments.json');
@@ -100,7 +66,7 @@ appGatling.post('/api/environments', (req, res) => {
   res.status(201).json(env);
 });
 
-appGatling.put('/api/environments/:id', (req, res) => {
+app.put('/api/environments/:id', (req, res) => {
   const envs = readData('environments.json');
   const idx = envs.findIndex(e => e.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
@@ -111,7 +77,7 @@ appGatling.put('/api/environments/:id', (req, res) => {
   res.json(envs[idx]);
 });
 
-appGatling.delete('/api/environments/:id', (req, res) => {
+app.delete('/api/environments/:id', (req, res) => {
   const envs = readData('environments.json');
   const filtered = envs.filter(e => e.id !== req.params.id);
   if (filtered.length === envs.length) return res.status(404).json({ error: 'Not found' });
@@ -119,19 +85,19 @@ appGatling.delete('/api/environments/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Scenarios API (Gatling server) ───────────────────────────────────────────
-appGatling.get('/api/scenarios', (req, res) => {
+// ── Scenarios API ────────────────────────────────────────────────────────────
+app.get('/api/scenarios', (req, res) => {
   res.json(readData('scenarios.json'));
 });
 
-appGatling.get('/api/scenarios/:id', (req, res) => {
+app.get('/api/scenarios/:id', (req, res) => {
   const scenarios = readData('scenarios.json');
   const s = scenarios.find(s => s.id === req.params.id);
   if (!s) return res.status(404).json({ error: 'Not found' });
   res.json(s);
 });
 
-appGatling.post('/api/scenarios', (req, res) => {
+app.post('/api/scenarios', (req, res) => {
   const { name, description, steps } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
   const scenarios = readData('scenarios.json');
@@ -148,7 +114,7 @@ appGatling.post('/api/scenarios', (req, res) => {
   res.status(201).json(scenario);
 });
 
-appGatling.put('/api/scenarios/:id', (req, res) => {
+app.put('/api/scenarios/:id', (req, res) => {
   const scenarios = readData('scenarios.json');
   const idx = scenarios.findIndex(s => s.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
@@ -159,7 +125,7 @@ appGatling.put('/api/scenarios/:id', (req, res) => {
   res.json(scenarios[idx]);
 });
 
-appGatling.delete('/api/scenarios/:id', (req, res) => {
+app.delete('/api/scenarios/:id', (req, res) => {
   const scenarios = readData('scenarios.json');
   const filtered = scenarios.filter(s => s.id !== req.params.id);
   if (filtered.length === scenarios.length) return res.status(404).json({ error: 'Not found' });
@@ -167,8 +133,8 @@ appGatling.delete('/api/scenarios/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Runs API (Gatling server) ─────────────────────────────────────────────────
-appGatling.get('/api/runs', (req, res) => {
+// ── Runs API ─────────────────────────────────────────────────────────────────
+app.get('/api/runs', (req, res) => {
   let runs = readData('runs.json');
   const { scenarioId, environmentId, from, to, page = 1, limit = 20 } = req.query;
   if (scenarioId) runs = runs.filter(r => r.scenarioId === scenarioId);
@@ -182,16 +148,15 @@ appGatling.get('/api/runs', (req, res) => {
   res.json({ items, total, page: Number(page), limit: Number(limit) });
 });
 
-appGatling.get('/api/runs/:id', (req, res) => {
+app.get('/api/runs/:id', (req, res) => {
   const runs = readData('runs.json');
   const run = runs.find(r => r.id === req.params.id);
   if (!run) return res.status(404).json({ error: 'Not found' });
-  const log = runLogs.get(run.id) || null;
-  res.json({ ...run, log });
+  res.json(run);
 });
 
-// ── Run Scenario API (Gatling server) ────────────────────────────────────────
-appGatling.post('/api/scenarios/:id/run', (req, res) => {
+// ── Run Scenario API ─────────────────────────────────────────────────────────
+app.post('/api/scenarios/:id/run', (req, res) => {
   const scenarios = readData('scenarios.json');
   const scenario = scenarios.find(s => s.id === req.params.id);
   if (!scenario) return res.status(404).json({ error: 'Scenario not found' });
@@ -293,7 +258,7 @@ appGatling.post('/api/scenarios/:id/run', (req, res) => {
 
 // Live progress for a scenario run. Streams SSE while the run is in flight;
 // answers with a plain JSON terminal state once it is only in runs.json.
-appGatling.get('/api/runs/:id/progress', (req, res) => {
+app.get('/api/runs/:id/progress', (req, res) => {
   const t = tests.get(req.params.id);
   // A finished run lingers in `tests` until it expires; streaming to it would
   // hang forever, since its terminal event already fired.
@@ -494,9 +459,6 @@ ${stepCode.replace(/__PROXY__/g, proxyParam)}
 const tempDir = path.join(writableBase, 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
-// Live log lines for in-progress Gatling runs (cleared on completion)
-const runLogs = new Map();
-
 // === CONFIGURATION ===
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 const MAX_CONCURRENT_TESTS = 5;        // Max concurrent tests allowed
@@ -580,67 +542,6 @@ function parseK6Metrics(parsed) {
     dataReceived: m.data_received ? m.data_received.count : 0,
     dataSent: m.data_sent ? m.data_sent.count : 0,
     rawMetrics: m,
-  };
-}
-
-// ── Gatling simulation.log parser ───────────────────────────────────────────
-// Parses Gatling's tab-separated simulation.log to extract latency percentiles
-// and request counts without needing the HTML report (--no-reports flag).
-function parseGatlingSimLog(logPath) {
-  let content;
-  try { content = fs.readFileSync(logPath, 'utf8'); } catch { return null; }
-
-  const responseTimes = [];
-  let okCount = 0;
-  let koCount = 0;
-  let minTs = Infinity;
-  let maxTs = -Infinity;
-
-  for (const line of content.split('\n')) {
-    if (!line.startsWith('REQUEST\t')) continue;
-    const parts = line.split('\t');
-    if (parts.length < 7) continue;
-    const start  = parseInt(parts[4], 10);
-    const end    = parseInt(parts[5], 10);
-    const status = parts[6];
-    if (isNaN(start) || isNaN(end)) continue;
-
-    const rt = end - start;
-    responseTimes.push(rt);
-    if (status === 'OK') okCount++; else koCount++;
-    if (start < minTs) minTs = start;
-    if (end   > maxTs) maxTs = end;
-  }
-
-  if (responseTimes.length === 0) return null;
-
-  responseTimes.sort((a, b) => a - b);
-
-  const pct = (p) => {
-    const idx = Math.min(Math.ceil((p / 100) * responseTimes.length) - 1, responseTimes.length - 1);
-    return responseTimes[Math.max(0, idx)];
-  };
-
-  const total      = okCount + koCount;
-  const durationMs = (maxTs !== -Infinity && minTs !== Infinity) ? Math.max(maxTs - minTs, 1) : 1000;
-  const sum        = responseTimes.reduce((s, v) => s + v, 0);
-
-  return {
-    totalRequests: total,
-    rps:           total / (durationMs / 1000),
-    latency: {
-      avg: sum / responseTimes.length,
-      p50: pct(50),
-      p75: pct(75),
-      p90: pct(90),
-      p95: pct(95),
-      p99: pct(99),
-      min: responseTimes[0],
-      max: responseTimes[responseTimes.length - 1],
-    },
-    successRate: total > 0 ? okCount / total : 1,
-    errorRate:   total > 0 ? koCount / total : 0,
-    statusCodes: {},
   };
 }
 

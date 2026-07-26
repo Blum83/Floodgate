@@ -98,7 +98,7 @@ async function loadDashboard() {
       <td>${esc(r.environmentName)}</td>
       <td>
         ${statusBadge(r.status)}
-        ${r.status === 'running' ? `<span class="gatling-badge checking" style="margin-left:6px;font-size:0.58rem"><span id="run-live-log-${r.id}">starting…</span></span>` : ''}
+        ${r.status === 'running' ? `<span class="engine-badge checking" style="margin-left:6px;font-size:0.58rem">in progress…</span>` : ''}
       </td>
       <td>${fmtDate(r.startedAt)}</td>
     </tr>
@@ -791,20 +791,20 @@ function statusBadge(status) {
 
 // ── k6 status badge ───────────────────────────────────────────────────────────
 async function checkK6Status() {
-  const badge = document.getElementById('gatlingBadge');
+  const badge = document.getElementById('engineBadge');
   if (!badge) return;
   try {
     const data = await fetchJSON('/api/status');
     if (data.hasK6) {
       const ver = (data.version || '').split('\n')[0].trim().slice(0, 30);
-      badge.className = 'gatling-badge ready';
+      badge.className = 'engine-badge ready';
       badge.textContent = '⬡ ' + (ver || 'k6 ready');
     } else {
-      badge.className = 'gatling-badge checking';
+      badge.className = 'engine-badge checking';
       badge.textContent = '⬡ k6 not found';
     }
   } catch {
-    badge.className = 'gatling-badge checking';
+    badge.className = 'engine-badge checking';
     badge.textContent = '⬡ k6…';
   }
 }

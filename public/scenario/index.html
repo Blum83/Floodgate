@@ -80,7 +80,7 @@
     .nav-tab.active { color: var(--purple-light); background: #1a1040; }
 
     .topnav-right { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
-    .gatling-badge {
+    .engine-badge {
       display: inline-flex;
       align-items: center;
       gap: 5px;
@@ -92,9 +92,9 @@
       white-space: nowrap;
       transition: background 0.2s, color 0.2s;
     }
-    .gatling-badge.checking  { background: #111827; color: #475569; border: 1px solid #1e2a3a; }
-    .gatling-badge.ready     { background: #0f2918; color: #4ade80; border: 1px solid #166534; }
-    .gatling-badge.download  { background: #1c1205; color: #fbbf24; border: 1px solid #92400e; animation: pulse 1.2s ease-in-out infinite; }
+    .engine-badge.checking  { background: #111827; color: #475569; border: 1px solid #1e2a3a; }
+    .engine-badge.ready     { background: #0f2918; color: #4ade80; border: 1px solid #166534; }
+    .engine-badge.download  { background: #1c1205; color: #fbbf24; border: 1px solid #92400e; animation: pulse 1.2s ease-in-out infinite; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
     .env-selector {
       padding: 5px 10px;
@@ -612,7 +612,7 @@
       </div>
     </div>
     <div class="topnav-right">
-      <span id="gatlingBadge" class="gatling-badge checking">⬡ Gatling…</span>
+      <span id="engineBadge" class="engine-badge checking">⬡ k6…</span>
       <select id="globalEnvSelect" class="env-selector">
         <option value="">— Select Environment —</option>
       </select>

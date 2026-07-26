@@ -1,5 +1,4 @@
 const express = require('express');
-const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -27,21 +26,16 @@ function unpackedPath(...parts) {
 // Ensure writable base exists
 if (!fs.existsSync(writableBase)) fs.mkdirSync(writableBase, { recursive: true });
 
-// ── k6 server (port 3847) — stress tests ──────────────────────────────────
-const appK6 = express();
-appK6.use(cors());
-appK6.use(express.json());
-appK6.use(express.static(path.join(__dirname, 'public')));
-appK6.use('/stress', express.static(path.join(__dirname, 'public', 'stress')));
+// ── Single Express app (port 3847) — stress tests + scenarios ───────────────
+const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/stress',   express.static(path.join(__dirname, 'public', 'stress')));
+app.use('/scenario', express.static(path.join(__dirname, 'public', 'scenario')));
 
-// ── Gatling server (port 3848) — scenarios ─────────────────────────────────
-const appGatling = express();
-appGatling.use(cors());
-appGatling.use(express.json());
-appGatling.use(express.static(path.join(__dirname, 'public', 'scenario')));
-
-// Alias for shared route registration
-const app = appK6;
+// Aliases so the existing per-mode route registrations keep reading naturally
+const appK6 = app;
+const appGatling = app;
 
 // ── Data layer ──────────────────────────────────────────────────────────────
 // data/ is in asarUnpack so it's always writable via unpackedPath
@@ -717,26 +711,14 @@ app.get('/api/install-k6', (req, res) => {
   })();
 });
 
-// ── Status API: k6 server checks k6, Gatling server checks Gatling ───────────
-appK6.get('/api/status', (req, res) => {
+// ── Status API: k6 availability (used by both modes) ─────────────────────────
+app.get('/api/status', (req, res) => {
   exec(`"${getK6Cmd()}" version`, (err, stdout) => {
     res.json({
       hasK6:   !err,
       version: err ? null : stdout.trim(),
     });
   });
-});
-
-appGatling.get('/api/status', (req, res) => {
-  try {
-    // Require only versions.js (no external deps) so it resolves correctly
-    // from app.asar.unpacked on Windows without needing node-stream-zip.
-    const versionsPath = unpackedPath('node_modules', '@gatling.io', 'cli', 'target', 'dependencies', 'versions.js');
-    const { versions } = require(versionsPath);
-    res.json({ hasGatling: true, gatlingVersion: versions.gatling.jsAdapter });
-  } catch {
-    res.json({ hasGatling: false, gatlingVersion: null });
-  }
 });
 
 app.post('/api/run-test', (req, res) => {
@@ -1060,15 +1042,9 @@ app.get('/api/active-tests', (req, res) => {
   });
 });
 
-// ── Start both servers ────────────────────────────────────────────────────────
-const serverK6 = appK6.listen(3847, () => console.log('Floodgate k6      → http://localhost:3847'));
-serverK6.on('error', (err) => {
+// ── Start server ──────────────────────────────────────────────────────────────
+const server = app.listen(3847, () => console.log('Floodgate → http://localhost:3847'));
+server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') console.log('Port 3847 already in use.');
-  else console.error('k6 server error:', err);
-});
-
-const serverGatling = appGatling.listen(3848, () => console.log('Floodgate Gatling → http://localhost:3848'));
-serverGatling.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') console.log('Port 3848 already in use.');
-  else console.error('Gatling server error:', err);
+  else console.error('Server error:', err);
 });

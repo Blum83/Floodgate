@@ -212,15 +212,25 @@ appGatling.post('/api/scenarios/:id/run', (req, res) => {
     return res.status(400).json({ error: 'Scenario has no steps' });
   }
 
+  // Scenario runs share the stress-test concurrency pool — both drive k6 on
+  // this machine, so one budget covers them.
+  const effVus = loadModel === 'arrival-rate' ? (Number(preAllocatedVUs) || 50) : (Number(vus) || 10);
+  if (tests.size >= MAX_CONCURRENT_TESTS) {
+    return res.status(429).json({ error: `Max concurrent tests limit reached (max ${MAX_CONCURRENT_TESTS})` });
+  }
+  let currentVus = 0;
+  for (const t of tests.values()) { if (!t.done) currentVus += (t.config?.vus || 0); }
+  if (currentVus + effVus > MAX_TOTAL_VUS) {
+    return res.status(429).json({ error: `Max total VUS limit reached (max ${MAX_TOTAL_VUS})` });
+  }
+
   const runId = makeId();
-  const simFolder     = path.join(writableBase, 'temp', `${runId}-sim`);
-  const resultsFolder = path.join(writableBase, 'temp', `${runId}-results`);
+  const scriptPath  = path.join(tempDir, `${runId}-scenario.js`);
+  const resultsPath = path.join(tempDir, `${runId}-results.json`);
+  const summaryPath = path.join(tempDir, `${runId}-summary.json`);
 
-  fs.mkdirSync(simFolder,     { recursive: true });
-  fs.mkdirSync(resultsFolder, { recursive: true });
-
-  const simContent = generateGatlingSimulation({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs, proxy });
-  fs.writeFileSync(path.join(simFolder, 'FloodgateSimulation.gatling.js'), simContent, 'utf8');
+  const script = generateK6ScenarioScript({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs, proxy });
+  fs.writeFileSync(scriptPath, script, 'utf8');
 
   const runs = readData('runs.json');
   const run = {
@@ -244,61 +254,65 @@ appGatling.post('/api/scenarios/:id/run', (req, res) => {
   runs.push(run);
   writeData('runs.json', runs);
 
-  const gatlingCli = unpackedPath('node_modules', '@gatling.io', 'cli', 'target', 'index.js');
-  const proc = spawn(process.execPath, [
-    gatlingCli,
-    'run',
-    '--sources-folder',  simFolder,
-    '--bundle-file',     path.join(resultsFolder, 'bundle.js'),
-    '--results-folder',  resultsFolder,
-    '--non-interactive',
-  ], {
-    cwd: writableBase,
-    // In a packaged Electron app process.execPath is the app binary, not node.
-    // ELECTRON_RUN_AS_NODE=1 makes it behave as Node.js while keeping ASAR support.
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  // Register in `tests` so the shared limits and SSE progress stream apply.
+  tests.set(runId, {
+    status: 'running',
+    progress: 0,
+    stdout: '',
+    stderr: '',
+    parsed: null,
+    done: false,
+    error: null,
+    clients: new Set(),
+    config: { vus: effVus, duration, rampUp },
+    startTime: Date.now(),
+    endTime: null,
   });
 
-  // Capture stdout/stderr to surface JVM download progress in the UI
-  const captureLog = (chunk) => {
-    const line = chunk.toString().trim();
-    if (!line) return;
-    // Store last meaningful line for this run (polled by frontend)
-    runLogs.set(runId, line);
-  };
-  proc.stdout.on('data', captureLog);
-  proc.stderr.on('data', captureLog);
-
-  proc.on('close', (code) => {
-    const allRuns = readData('runs.json');
-    const idx = allRuns.findIndex(r => r.id === runId);
-    if (idx === -1) return;
-
-    allRuns[idx].status    = code === 0 ? 'completed' : 'failed';
-    allRuns[idx].finishedAt = new Date().toISOString();
-    if (code !== 0) allRuns[idx].error = `Gatling exited with code ${code}`;
-
-    // Parse simulation.log — search any subdir of resultsFolder
-    try {
-      const entries = fs.readdirSync(resultsFolder);
-      for (const entry of entries) {
-        const logPath = path.join(resultsFolder, entry, 'simulation.log');
-        if (fs.existsSync(logPath)) {
-          allRuns[idx].metrics = parseGatlingSimLog(logPath);
-          break;
-        }
+  const totalDuration = (Number(rampUp) || 0) + Number(duration) + 10;
+  runK6({
+    testId: runId, scriptPath, resultsPath, summaryPath, totalDuration,
+    onDone: (code, metrics) => {
+      const allRuns = readData('runs.json');
+      const idx = allRuns.findIndex(r => r.id === runId);
+      if (idx !== -1) {
+        allRuns[idx].status     = code === 0 ? 'completed' : 'failed';
+        allRuns[idx].finishedAt = new Date().toISOString();
+        allRuns[idx].metrics    = metrics;
+        if (code !== 0 && !metrics) allRuns[idx].error = `k6 exited with code ${code}`;
+        writeData('runs.json', allRuns);
       }
-    } catch (_) {}
-
-    // Cleanup
-    try { fs.rmSync(simFolder,     { recursive: true, force: true }); } catch {}
-    try { fs.rmSync(resultsFolder, { recursive: true, force: true }); } catch {}
-
-    runLogs.delete(runId);
-    writeData('runs.json', allRuns);
+      try { fs.unlinkSync(scriptPath); }  catch {}
+      try { fs.unlinkSync(resultsPath); } catch {}
+      try { fs.unlinkSync(summaryPath); } catch {}
+    },
   });
 
   res.status(202).json({ runId, status: 'running' });
+});
+
+// Live progress for a scenario run. Streams SSE while the run is in flight;
+// answers with a plain JSON terminal state once it is only in runs.json.
+appGatling.get('/api/runs/:id/progress', (req, res) => {
+  const t = tests.get(req.params.id);
+  // A finished run lingers in `tests` until it expires; streaming to it would
+  // hang forever, since its terminal event already fired.
+  if (!t || t.done) {
+    const run = readData('runs.json').find(r => r.id === req.params.id);
+    if (run) return res.json({ done: true, status: run.status, metrics: run.metrics || null });
+    return res.status(404).json({ error: 'Run not found' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+
+  t.clients.add(res);
+  res.write(`data: ${JSON.stringify({ type: 'status', status: t.status, progress: t.progress })}\n\n`);
+
+  req.on('close', () => { t.clients.delete(res); });
 });
 
 // ── k6 Scenario Script Generator ────────────────────────────────────────────

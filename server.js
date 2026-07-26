@@ -244,7 +244,9 @@ app.post('/api/scenarios/:id/run', (req, res) => {
         allRuns[idx].status     = code === 0 ? 'completed' : 'failed';
         allRuns[idx].finishedAt = new Date().toISOString();
         allRuns[idx].metrics    = metrics;
-        if (code !== 0 && !metrics) allRuns[idx].error = `k6 exited with code ${code}`;
+        if (code !== 0 && !metrics) {
+          allRuns[idx].error = tests.get(runId)?.error || `k6 exited with code ${code}`;
+        }
         writeData('runs.json', allRuns);
       }
       try { fs.unlinkSync(scriptPath); }  catch {}
@@ -762,7 +764,34 @@ function runK6({ testId, scriptPath, resultsPath, summaryPath, totalDuration, on
     queueLog(txt);
   });
 
+  // A missing k6 binary emits 'error', which would otherwise be unhandled and
+  // take the whole server down — including the auto-install route the user
+  // needs to recover. Report it as a failed run instead.
+  let settled = false;
+  proc.on('error', (err) => {
+    if (settled) return;
+    settled = true;
+    clearInterval(progressInterval);
+    if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = null; }
+    const t = tests.get(testId);
+    if (!t) return;
+    t.done = true;
+    t.status = 'failed';
+    t.endTime = Date.now();
+    t.error = err.code === 'ENOENT'
+      ? 'k6 not found — install it from the status badge and try again'
+      : `Failed to start k6: ${err.message}`;
+
+    if (onDone) onDone(-1, null);
+
+    t.clients.forEach((sse) => {
+      sse.write(`data: ${JSON.stringify({ type: 'done', status: t.status, error: t.error, metrics: null })}\n\n`);
+    });
+  });
+
   proc.on('close', (code) => {
+    if (settled) return;
+    settled = true;
     clearInterval(progressInterval);
     if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = null; }
     flushLogs();

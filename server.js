@@ -450,6 +450,7 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 const runLogs = new Map();
 
 // === CONFIGURATION ===
+const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'];
 const MAX_CONCURRENT_TESTS = 5;        // Max concurrent tests allowed
 const MAX_TOTAL_VUS = 25000;           // Max total VUS across all tests (5000 per test × 5 tests)
 const TEST_EXPIRY_MS = 5 * 60 * 1000;  // Keep tests 5 minutes after completion
@@ -753,6 +754,13 @@ app.post('/api/run-test', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields: url, method, vus, duration' });
   }
 
+  // Whitelist the method — it is spliced into the generated script as an
+  // identifier, so an unchecked value would be arbitrary code.
+  const methodUpper = String(req.body.method).toUpperCase();
+  if (!ALLOWED_METHODS.includes(methodUpper)) {
+    return res.status(400).json({ error: `Invalid method. Allowed: ${ALLOWED_METHODS.join(', ')}` });
+  }
+
   // Check concurrent tests limit
   if (tests.size >= MAX_CONCURRENT_TESTS) {
     return res.status(429).json({ 
@@ -777,7 +785,7 @@ app.post('/api/run-test', (req, res) => {
   const resultsPath = path.join(tempDir, `${testId}-results.json`);
   const summaryPath = path.join(tempDir, `${testId}-summary.json`);
 
-  const normalizedMethod = method.toLowerCase();
+  const normalizedMethod = methodUpper.toLowerCase();
   const hasBody = ['post', 'put', 'patch', 'delete'].includes(normalizedMethod) && body;
 
   const headersLiteral = JSON.stringify(headers || {});
@@ -809,7 +817,7 @@ export const options = {
 };
 
 export default function () {
-  const res = http.${normalizedMethod}('${url}', ${hasBody ? bodyLiteral : 'null'}, { headers: ${headersLiteral}${proxyParam} });
+  const res = http.${normalizedMethod}(${JSON.stringify(url)}, ${hasBody ? bodyLiteral : 'null'}, { headers: ${headersLiteral}${proxyParam} });
   const s = res.status;
   if (s >= 200 && s < 300) status_2xx.add(1);
   else if (s >= 300 && s < 400) status_3xx.add(1);

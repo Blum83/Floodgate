@@ -498,6 +498,37 @@ async function loadRunDetail(id) {
       { val: run.duration + 's', lbl: 'Duration', cls: '' },
     ].map(c => `<div class="metric-card"><div class="m-val ${c.cls}">${c.val}</div><div class="m-lbl">${c.lbl}</div></div>`).join('');
   }
+
+  if (run.status === 'running') subscribeRunProgress(run.id);
+}
+
+// Live progress for an in-flight run. The endpoint answers with plain JSON
+// instead of a stream once the run is terminal, which surfaces here as an
+// error event — harmless, since loadRunDetail already rendered that state.
+let runDetailSource = null;
+function subscribeRunProgress(runId) {
+  if (runDetailSource) { runDetailSource.close(); runDetailSource = null; }
+  const src = new EventSource(`/api/runs/${runId}/progress`);
+  runDetailSource = src;
+
+  src.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+
+    if (msg.type === 'progress' || msg.type === 'status') {
+      const badge = document.getElementById('run-detail-status-badge');
+      if (badge && msg.progress !== undefined) {
+        badge.innerHTML = statusBadge('running') +
+          ` <span style="color:var(--muted);font-size:0.7rem">${msg.progress}%</span>`;
+      }
+    } else if (msg.type === 'done') {
+      src.close();
+      runDetailSource = null;
+      loadRunDetail(runId);
+    }
+  };
+
+  src.onerror = () => { src.close(); runDetailSource = null; };
 }
 
 // ── Environments ─────────────────────────────────────────────────────────────
@@ -758,39 +789,33 @@ function statusBadge(status) {
   return `<span class="badge ${map[status] || 'badge-blue'}">${status || '—'}</span>`;
 }
 
-// ── Gatling status badge ──────────────────────────────────────────────────────
-async function checkGatlingStatus() {
+// ── k6 status badge ───────────────────────────────────────────────────────────
+async function checkK6Status() {
   const badge = document.getElementById('gatlingBadge');
   if (!badge) return;
   try {
     const data = await fetchJSON('/api/status');
-    if (data.hasGatling) {
-      const ver = (data.gatlingVersion || '').split('\n')[0].trim().slice(0, 30);
+    if (data.hasK6) {
+      const ver = (data.version || '').split('\n')[0].trim().slice(0, 30);
       badge.className = 'gatling-badge ready';
-      badge.textContent = '⬡ Gatling ' + (ver || 'ready');
+      badge.textContent = '⬡ ' + (ver || 'k6 ready');
     } else {
       badge.className = 'gatling-badge checking';
-      badge.textContent = '⬡ Gatling not found';
+      badge.textContent = '⬡ k6 not found';
     }
   } catch {
     badge.className = 'gatling-badge checking';
-    badge.textContent = '⬡ Gatling…';
+    badge.textContent = '⬡ k6…';
   }
 }
 
-// Poll a running run and show live log in the runs table
+// Watch a running run so the runs table refreshes once it finishes
 let runPoller = null;
 function startRunPoller(runId) {
   if (runPoller) clearInterval(runPoller);
   runPoller = setInterval(async () => {
     try {
       const run = await fetchJSON(`/api/runs/${runId}`);
-      const logEl = document.getElementById('run-live-log-' + runId);
-      if (logEl && run.log) {
-        const isDownload = /download|fetch|install|progress/i.test(run.log);
-        logEl.parentElement.className = 'gatling-badge ' + (isDownload ? 'download' : 'checking');
-        logEl.textContent = run.log.length > 60 ? run.log.slice(0, 60) + '…' : run.log;
-      }
       if (run.status !== 'running') {
         clearInterval(runPoller);
         runPoller = null;
@@ -803,7 +828,7 @@ function startRunPoller(runId) {
 // ── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   await loadEnvSelector();
-  checkGatlingStatus();
+  checkK6Status();
 
   // Single listener for the global environment selector — added once here to
   // avoid duplicating listeners each time loadEnvSelector() is called.

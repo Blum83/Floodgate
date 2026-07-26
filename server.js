@@ -756,129 +756,11 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-app.post('/api/run-test', (req, res) => {
-  const { action, testId: stopTestId, url, method, vus, duration, rampUp, headers, body, proxies } = req.body;
-
-  // Handle stop action first
-  if (action === 'stop' && stopTestId) {
-    const t = tests.get(stopTestId);
-    if (!t) return res.status(404).json({ error: 'Test not found' });
-    
-    // Signal k6 to stop by writing to stderr
-    t.stdout += '\nEOF\n';
-    if (t.clients.size > 0) {
-      t.clients.forEach((sse) => {
-        sse.write(`data: ${JSON.stringify({ type: 'log', stream: 'stdout', text: 'Stopping test...' })}\n\n`);
-      });
-    }
-    
-    // Remove from active tests immediately
-    t.done = true;
-    t.status = 'stopped';
-    checkAndCleanupTests();
-    
-    t.clients.forEach((sse) => {
-      sse.write(`data: ${JSON.stringify({ type: 'done', status: t.status, error: null, metrics: null })}\n\n`);
-    });
-    return res.json({ stopped: true });
-  }
-
-  // Validate required fields for starting tests
-  if (!req.body.url || !req.body.method || !req.body.vus || !req.body.duration) {
-    return res.status(400).json({ error: 'Missing required fields: url, method, vus, duration' });
-  }
-
-  // Whitelist the method — it is spliced into the generated script as an
-  // identifier, so an unchecked value would be arbitrary code.
-  const methodUpper = String(req.body.method).toUpperCase();
-  if (!ALLOWED_METHODS.includes(methodUpper)) {
-    return res.status(400).json({ error: `Invalid method. Allowed: ${ALLOWED_METHODS.join(', ')}` });
-  }
-
-  // Check concurrent tests limit
-  if (tests.size >= MAX_CONCURRENT_TESTS) {
-    return res.status(429).json({ 
-      error: `Max concurrent tests limit reached (max ${MAX_CONCURRENT_TESTS})`,
-      waitingFor: `${MAX_CONCURRENT_TESTS - tests.size} test(s) to complete` 
-    });
-  }
-
-  let currentVus = 0;
-  for (const t of tests.values()) { if (!t.done) currentVus += (t.config?.vus || 0); }
-  const totalVus = currentVus + (vus || 0);
-  if (totalVus > MAX_TOTAL_VUS) {
-    return res.status(429).json({ 
-      error: `Max total VUS limit reached (max ${MAX_TOTAL_VUS})`,
-      currentVus: totalVus,
-      availableVus: MAX_TOTAL_VUS - totalVus
-    });
-  }
-
-  const testId = makeTestId();
-  const scriptPath = path.join(tempDir, `${testId}-script.js`);
-  const resultsPath = path.join(tempDir, `${testId}-results.json`);
-  const summaryPath = path.join(tempDir, `${testId}-summary.json`);
-
-  const normalizedMethod = methodUpper.toLowerCase();
-  const hasBody = ['post', 'put', 'patch', 'delete'].includes(normalizedMethod) && body;
-
-  const headersLiteral = JSON.stringify(headers || {});
-  const bodyLiteral = hasBody ? JSON.stringify(body) : 'null';
-
-  const proxyList = Array.isArray(proxies) ? proxies.filter(Boolean) : [];
-  const proxyBlock = proxyList.length
-    ? `const __proxies = ${JSON.stringify(proxyList)};
-const __proxy = __proxies[(__VU - 1) % __proxies.length];`
-    : '';
-  const proxyParam = proxyList.length ? ', proxy: __proxy' : '';
-
-  const script = `import http from 'k6/http';
-import { sleep } from 'k6';
-import { Counter } from 'k6/metrics';
-
-const status_2xx = new Counter('status_2xx');
-const status_3xx = new Counter('status_3xx');
-const status_4xx = new Counter('status_4xx');
-const status_5xx = new Counter('status_5xx');
-const status_other = new Counter('status_other');
-${proxyBlock}
-export const options = {
-  stages: [
-    { duration: '${rampUp}s', target: ${vus} },
-    { duration: '${duration}s', target: ${vus} },
-    { duration: '10s', target: 0 },
-  ],
-};
-
-export default function () {
-  const res = http.${normalizedMethod}(${JSON.stringify(url)}, ${hasBody ? bodyLiteral : 'null'}, { headers: ${headersLiteral}${proxyParam} });
-  const s = res.status;
-  if (s >= 200 && s < 300) status_2xx.add(1);
-  else if (s >= 300 && s < 400) status_3xx.add(1);
-  else if (s >= 400 && s < 500) status_4xx.add(1);
-  else if (s >= 500 && s < 600) status_5xx.add(1);
-  else status_other.add(1);
-  sleep(1);
-};
-`;
-
-  fs.writeFileSync(scriptPath, script, 'utf8');
-
-  tests.set(testId, {
-    status: 'running',
-    progress: 0,
-    stdout: '',
-    stderr: '',
-    parsed: null,
-    done: false,
-    error: null,
-    clients: new Set(),
-    config: { vus, duration, rampUp },
-    startTime: Date.now(),
-    endTime: null,
-  });
-
-  const totalDuration = (rampUp || 0) + duration + 10; // ramp + main + cooldown
+// ── Shared k6 runner ─────────────────────────────────────────────────────────
+// Spawns k6 for an already-registered entry in `tests`, streams progress/logs
+// to that entry's SSE clients, and parses metrics on exit. `onDone` runs after
+// metrics are parsed but before the terminal SSE event, so callers can persist.
+function runK6({ testId, scriptPath, resultsPath, summaryPath, totalDuration, onDone }) {
   const proc = spawn(getK6Cmd(), ['run', '--out', `json=${resultsPath}`, '--summary-export', summaryPath, scriptPath]);
 
   // Send progress updates every 2s
@@ -1011,10 +893,140 @@ export default function () {
       }
     }
 
+    if (onDone) onDone(code, t.metrics || null);
+
     t.clients.forEach((sse) => {
       sse.write(`data: ${JSON.stringify({ type: 'done', status: t.status, error: t.error || null, metrics: t.metrics })}\n\n`);
     });
   });
+
+  return proc;
+}
+
+app.post('/api/run-test', (req, res) => {
+  const { action, testId: stopTestId, url, method, vus, duration, rampUp, headers, body, proxies } = req.body;
+
+  // Handle stop action first
+  if (action === 'stop' && stopTestId) {
+    const t = tests.get(stopTestId);
+    if (!t) return res.status(404).json({ error: 'Test not found' });
+    
+    // Signal k6 to stop by writing to stderr
+    t.stdout += '\nEOF\n';
+    if (t.clients.size > 0) {
+      t.clients.forEach((sse) => {
+        sse.write(`data: ${JSON.stringify({ type: 'log', stream: 'stdout', text: 'Stopping test...' })}\n\n`);
+      });
+    }
+    
+    // Remove from active tests immediately
+    t.done = true;
+    t.status = 'stopped';
+    checkAndCleanupTests();
+    
+    t.clients.forEach((sse) => {
+      sse.write(`data: ${JSON.stringify({ type: 'done', status: t.status, error: null, metrics: null })}\n\n`);
+    });
+    return res.json({ stopped: true });
+  }
+
+  // Validate required fields for starting tests
+  if (!req.body.url || !req.body.method || !req.body.vus || !req.body.duration) {
+    return res.status(400).json({ error: 'Missing required fields: url, method, vus, duration' });
+  }
+
+  // Whitelist the method — it is spliced into the generated script as an
+  // identifier, so an unchecked value would be arbitrary code.
+  const methodUpper = String(req.body.method).toUpperCase();
+  if (!ALLOWED_METHODS.includes(methodUpper)) {
+    return res.status(400).json({ error: `Invalid method. Allowed: ${ALLOWED_METHODS.join(', ')}` });
+  }
+
+  // Check concurrent tests limit
+  if (tests.size >= MAX_CONCURRENT_TESTS) {
+    return res.status(429).json({ 
+      error: `Max concurrent tests limit reached (max ${MAX_CONCURRENT_TESTS})`,
+      waitingFor: `${MAX_CONCURRENT_TESTS - tests.size} test(s) to complete` 
+    });
+  }
+
+  let currentVus = 0;
+  for (const t of tests.values()) { if (!t.done) currentVus += (t.config?.vus || 0); }
+  const totalVus = currentVus + (vus || 0);
+  if (totalVus > MAX_TOTAL_VUS) {
+    return res.status(429).json({ 
+      error: `Max total VUS limit reached (max ${MAX_TOTAL_VUS})`,
+      currentVus: totalVus,
+      availableVus: MAX_TOTAL_VUS - totalVus
+    });
+  }
+
+  const testId = makeTestId();
+  const scriptPath = path.join(tempDir, `${testId}-script.js`);
+  const resultsPath = path.join(tempDir, `${testId}-results.json`);
+  const summaryPath = path.join(tempDir, `${testId}-summary.json`);
+
+  const normalizedMethod = methodUpper.toLowerCase();
+  const hasBody = ['post', 'put', 'patch', 'delete'].includes(normalizedMethod) && body;
+
+  const headersLiteral = JSON.stringify(headers || {});
+  const bodyLiteral = hasBody ? JSON.stringify(body) : 'null';
+
+  const proxyList = Array.isArray(proxies) ? proxies.filter(Boolean) : [];
+  const proxyBlock = proxyList.length
+    ? `const __proxies = ${JSON.stringify(proxyList)};
+const __proxy = __proxies[(__VU - 1) % __proxies.length];`
+    : '';
+  const proxyParam = proxyList.length ? ', proxy: __proxy' : '';
+
+  const script = `import http from 'k6/http';
+import { sleep } from 'k6';
+import { Counter } from 'k6/metrics';
+
+const status_2xx = new Counter('status_2xx');
+const status_3xx = new Counter('status_3xx');
+const status_4xx = new Counter('status_4xx');
+const status_5xx = new Counter('status_5xx');
+const status_other = new Counter('status_other');
+${proxyBlock}
+export const options = {
+  stages: [
+    { duration: '${rampUp}s', target: ${vus} },
+    { duration: '${duration}s', target: ${vus} },
+    { duration: '10s', target: 0 },
+  ],
+};
+
+export default function () {
+  const res = http.${normalizedMethod}(${JSON.stringify(url)}, ${hasBody ? bodyLiteral : 'null'}, { headers: ${headersLiteral}${proxyParam} });
+  const s = res.status;
+  if (s >= 200 && s < 300) status_2xx.add(1);
+  else if (s >= 300 && s < 400) status_3xx.add(1);
+  else if (s >= 400 && s < 500) status_4xx.add(1);
+  else if (s >= 500 && s < 600) status_5xx.add(1);
+  else status_other.add(1);
+  sleep(1);
+};
+`;
+
+  fs.writeFileSync(scriptPath, script, 'utf8');
+
+  tests.set(testId, {
+    status: 'running',
+    progress: 0,
+    stdout: '',
+    stderr: '',
+    parsed: null,
+    done: false,
+    error: null,
+    clients: new Set(),
+    config: { vus, duration, rampUp },
+    startTime: Date.now(),
+    endTime: null,
+  });
+
+  const totalDuration = (rampUp || 0) + duration + 10; // ramp + main + cooldown
+  runK6({ testId, scriptPath, resultsPath, summaryPath, totalDuration });
 
   return res.json({ testId });
 });

@@ -301,7 +301,7 @@ appGatling.post('/api/scenarios/:id/run', (req, res) => {
   res.status(202).json({ runId, status: 'running' });
 });
 
-// ── Gatling Simulation Generator ────────────────────────────────────────────
+// ── k6 Scenario Script Generator ────────────────────────────────────────────
 function parseProxyUrl(raw) {
   try {
     const u = new URL(raw.trim());
@@ -316,130 +316,164 @@ function parseProxyUrl(raw) {
   } catch { return null; }
 }
 
-function generateGatlingSimulation({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs, proxy }) {
-  const steps = scenario.steps;
-  const baseUrl = escJSStr(env.host);
+// Source of a tiny JSONPath resolver, emitted verbatim into generated k6
+// scripts. Supports $.a.b, a.b and [n] index segments; undefined if absent.
+const K6_HELPERS_SRC = `
+function jsonPathValue(obj, path) {
+  if (obj == null || !path) return undefined;
+  var parts = String(path).replace(/^\\$\\.?/, '').match(/[^.\\[\\]]+/g) || [];
+  var cur = obj;
+  for (var i = 0; i < parts.length; i++) {
+    if (cur == null) return undefined;
+    cur = cur[/^\\d+$/.test(parts[i]) ? Number(parts[i]) : parts[i]];
+  }
+  return cur;
+}
 
-  // ── Per-step exec() chain ──
-  const stepCode = steps.map((step, i) => {
-    const stepName = escJSStr(step.name || `step${i + 1}`);
-    const method   = (step.method || 'GET').toLowerCase();
-    const hasBody  = ['post', 'put', 'patch'].includes(method);
-    const stepPath = toGatlingEL(step.path || '/');
+function buildQuery(obj) {
+  var parts = [];
+  for (var k in obj) {
+    if (obj[k] !== undefined && obj[k] !== null) {
+      parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(obj[k]));
+    }
+  }
+  return parts.length ? '?' + parts.join('&') : '';
+}
 
-    // Query params → .queryParam("k", "v")
-    const queryLines = [];
+function recordStatus(s) {
+  if (s >= 200 && s < 300) status_2xx.add(1);
+  else if (s >= 300 && s < 400) status_3xx.add(1);
+  else if (s >= 400 && s < 500) status_4xx.add(1);
+  else if (s >= 500 && s < 600) status_5xx.add(1);
+  else status_other.add(1);
+}`;
+
+// Turn user text containing {{var}} placeholders into the inside of a k6
+// template literal: neutralise backticks/${ from the user, then expand
+// {{name}} into a lookup against the per-iteration `vars` object.
+function toK6Template(str) {
+  return String(str == null ? '' : str)
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$\{/g, '\\${')
+    .replace(/\{\{(\w+)\}\}/g, '${vars.$1 === undefined ? "" : vars.$1}');
+}
+
+function generateK6ScenarioScript({ scenario, env, vus, duration, rampUp, loadModel, arrivalRate, preAllocatedVUs, proxy }) {
+  const steps = scenario.steps || [];
+  const baseUrl = toK6Template(env.host);
+
+  const stepCode = steps.map((step) => {
+    const upper = String(step.method || 'GET').toUpperCase();
+    const method = (ALLOWED_METHODS.includes(upper) ? upper : 'GET').toLowerCase();
+    const hasBody = ['post', 'put', 'patch'].includes(method);
+
+    const queryPairs = [];
     if (step.queryParams && step.queryParams.trim()) {
       step.queryParams.trim().split('\n').map(l => l.trim()).filter(l => l.includes('=')).forEach(l => {
-        const idx = l.indexOf('=');
-        queryLines.push(`        .queryParam("${escJSStr(l.slice(0, idx).trim())}", "${toGatlingEL(l.slice(idx + 1).trim())}")`);
+        const i = l.indexOf('=');
+        queryPairs.push(`${JSON.stringify(l.slice(0, i).trim())}: \`${toK6Template(l.slice(i + 1).trim())}\``);
       });
     }
+    const queryExpr = queryPairs.length ? ` + buildQuery({ ${queryPairs.join(', ')} })` : '';
 
-    // Headers → .header("k", "v")
-    const headerLines = [];
+    const headerPairs = [];
     if (step.headers && step.headers.trim()) {
       step.headers.trim().split('\n').map(l => l.trim()).filter(l => l.includes(':')).forEach(l => {
-        const ci = l.indexOf(':');
-        headerLines.push(`        .header("${escJSStr(l.slice(0, ci).trim())}", "${toGatlingEL(l.slice(ci + 1).trim())}")`);
+        const i = l.indexOf(':');
+        headerPairs.push(`${JSON.stringify(l.slice(0, i).trim())}: \`${toK6Template(l.slice(i + 1).trim())}\``);
       });
     }
 
-    // Body
     const bodyTrimmed = hasBody && step.body && step.body.trim();
+    const bodyExpr = bodyTrimmed ? '`' + toK6Template(bodyTrimmed) + '`' : 'null';
     const isJson = bodyTrimmed && (bodyTrimmed.startsWith('{') || bodyTrimmed.startsWith('['));
-    const bodyLines = bodyTrimmed
-      ? [`        .body(StringBody("${toGatlingEL(bodyTrimmed)}"))${isJson ? '.asJson()' : ''}`]
-      : [];
+    if (isJson && !headerPairs.some(h => /^"content-type"/i.test(h))) {
+      headerPairs.push('"Content-Type": "application/json"');
+    }
 
-    // Checks + extractions
-    const checkParts = [];
     const chk = step.checks || {};
-    if (chk.statusCode)      checkParts.push(`status().is(${chk.statusCode})`);
-    else                     checkParts.push(`status().in(200, 201, 202, 203, 204)`);
-    if (chk.maxResponseTime) checkParts.push(`responseTimeInMillis().lte(${chk.maxResponseTime})`);
-    if (chk.bodyContains)    checkParts.push(`bodyString().contains("${escJSStr(chk.bodyContains)}")`);
-    (step.extractions || []).filter(ex => ex.varName && ex.jsonPath).forEach(ex => {
-      checkParts.push(`jsonPath("${escJSStr(ex.jsonPath)}").saveAs("${escJSStr(ex.varName)}")`);
-    });
-    const checkLine = `        .check(\n          ${checkParts.join(',\n          ')}\n        )`;
+    const checks = [];
+    if (chk.statusCode) {
+      const sc = Number(chk.statusCode);
+      checks.push(`'status is ${sc}': function (r) { return r.status === ${sc}; }`);
+    } else {
+      checks.push(`'status is 2xx': function (r) { return r.status >= 200 && r.status < 300; }`);
+    }
+    if (chk.maxResponseTime) {
+      const mrt = Number(chk.maxResponseTime);
+      checks.push(`'response under ${mrt}ms': function (r) { return r.timings.duration <= ${mrt}; }`);
+    }
+    if (chk.bodyContains) {
+      checks.push(`'body contains': function (r) { return String(r.body).indexOf(${JSON.stringify(chk.bodyContains)}) !== -1; }`);
+    }
 
-    // Think time → .pause()
-    let pauseLine = '      .pause(1)';
+    const extractions = (step.extractions || [])
+      .filter(ex => ex.varName && ex.jsonPath)
+      .map(ex => `    try { var v = jsonPathValue(res.json(), ${JSON.stringify(ex.jsonPath)}); if (v !== undefined) vars[${JSON.stringify(ex.varName)}] = v; } catch (e) {}`);
+
+    let sleepLine = '    sleep(1);';
     if (step.thinkTime !== undefined && step.thinkTime !== '') {
       const tt = String(step.thinkTime).trim();
       if (tt.includes('-')) {
         const [mn, mx] = tt.split('-').map(Number);
-        if (!isNaN(mn) && !isNaN(mx) && mx > mn) pauseLine = `      .pause(${mn}, ${mx})`;
+        sleepLine = (!isNaN(mn) && !isNaN(mx) && mx > mn) ? `    sleep(${mn} + Math.random() * ${mx - mn});` : sleepLine;
       } else {
         const f = parseFloat(tt);
-        if (isNaN(f) || f <= 0) pauseLine = '';
-        else pauseLine = `      .pause(${f})`;
+        sleepLine = (isNaN(f) || f <= 0) ? '' : `    sleep(${f});`;
       }
     }
 
     return [
-      `      .exec(`,
-      `        http("${stepName}")`,
-      `          .${method}("${stepPath}")`,
-      ...queryLines,
-      ...headerLines,
-      ...bodyLines,
-      checkLine,
-      `      )`,
-      ...(pauseLine ? [pauseLine] : []),
+      `  {`,
+      `    var url = \`${baseUrl}${toK6Template(step.path || '/')}\`${queryExpr};`,
+      `    var res = http.${method}(url, ${bodyExpr}, { headers: { ${headerPairs.join(', ')} }__PROXY__ });`,
+      `    recordStatus(res.status);`,
+      `    check(res, {`,
+      `      ${checks.join(',\n      ')}`,
+      `    });`,
+      ...extractions,
+      ...(sleepLine ? [sleepLine] : []),
+      `  }`,
     ].join('\n');
   }).join('\n');
 
-  // ── Injection profile ──
-  let injectMethod, injectSteps;
+  let execBlock;
   if (loadModel === 'arrival-rate') {
-    const rate = arrivalRate || 10;
-    injectMethod = 'injectOpen';
-    injectSteps = rampUp > 0
-      ? `rampUsersPerSec(0).to(${rate}).during(${rampUp}),\n      constantUsersPerSec(${rate}).during(${duration})`
-      : `constantUsersPerSec(${rate}).during(${duration})`;
+    const rate = Number(arrivalRate) || 10;
+    const prealloc = Number(preAllocatedVUs) || 50;
+    execBlock = Number(rampUp) > 0
+      ? `{ executor: 'ramping-arrival-rate', startRate: 0, timeUnit: '1s', preAllocatedVUs: ${prealloc}, stages: [{ target: ${rate}, duration: '${Number(rampUp)}s' }, { target: ${rate}, duration: '${Number(duration)}s' }] }`
+      : `{ executor: 'constant-arrival-rate', rate: ${rate}, timeUnit: '1s', duration: '${Number(duration)}s', preAllocatedVUs: ${prealloc} }`;
   } else {
-    injectMethod = 'injectClosed';
-    injectSteps = rampUp > 0
-      ? `rampConcurrentUsers(0).to(${vus}).during(${rampUp}),\n      constantConcurrentUsers(${vus}).during(${duration})`
-      : `constantConcurrentUsers(${vus}).during(${duration})`;
+    const v = Number(vus) || 10;
+    execBlock = Number(rampUp) > 0
+      ? `{ executor: 'ramping-vus', startVUs: 0, stages: [{ target: ${v}, duration: '${Number(rampUp)}s' }, { target: ${v}, duration: '${Number(duration)}s' }] }`
+      : `{ executor: 'constant-vus', vus: ${v}, duration: '${Number(duration)}s' }`;
   }
 
-  const parsedProxy = proxy ? parseProxyUrl(proxy) : null;
-  const proxyImport = parsedProxy ? ', Proxy' : '';
-  let proxyChain = '';
-  if (parsedProxy) {
-    proxyChain = `\n    .proxy(Proxy("${parsedProxy.host}", ${parsedProxy.port})`;
-    if (parsedProxy.socks) proxyChain += `.socks(${parsedProxy.socksVer})`;
-    if (parsedProxy.user)  proxyChain += `.credentials("${parsedProxy.user}", "${parsedProxy.pass}")`;
-    proxyChain += ')';
-  }
+  // k6 takes the proxy as a URL string; parseProxyUrl is used only to reject
+  // malformed input before it reaches the script.
+  const proxyOk = proxy && parseProxyUrl(proxy);
+  const proxyParam = proxyOk ? `, proxy: ${JSON.stringify(String(proxy).trim())}` : '';
 
-  return `import {
-  simulation, scenario,
-  jsonPath, bodyString, responseTimeInMillis, StringBody,
-  constantConcurrentUsers, rampConcurrentUsers,
-  constantUsersPerSec, rampUsersPerSec,
-} from "@gatling.io/core";
-import { http, status${proxyImport} } from "@gatling.io/http";
+  return `import http from 'k6/http';
+import { sleep, check } from 'k6';
+import { Counter } from 'k6/metrics';
 
-export default simulation((setUp) => {
-  const httpProtocol = http
-    .baseUrl("${baseUrl}")
-    .acceptHeader("application/json, */*")
-    .acceptEncodingHeader("gzip, deflate")
-    .userAgentHeader("Floodgate/1.0")${proxyChain};
+const status_2xx = new Counter('status_2xx');
+const status_3xx = new Counter('status_3xx');
+const status_4xx = new Counter('status_4xx');
+const status_5xx = new Counter('status_5xx');
+const status_other = new Counter('status_other');
+${K6_HELPERS_SRC}
 
-  const scn = scenario("${escJSStr(scenario.name)}")
-${stepCode};
+export const options = { scenarios: { main: ${execBlock} } };
 
-  setUp(
-    scn.${injectMethod}(
-      ${injectSteps}
-    )
-  ).protocols(httpProtocol);
-});
+export default function () {
+  var vars = {};
+${stepCode.replace(/__PROXY__/g, proxyParam)}
+}
 `;
 }
 
